@@ -1,11 +1,222 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-TW">
 <head>
-    <meta charset="utf-8">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>StockLab 戰情室</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f4f7f6; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .container { width: 90%; max-width: 1000px; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        
+        /* 頂部導覽列 */
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 2px solid #eee; padding-bottom: 15px; }
+        .brand { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        
+        /* 使用者招呼語樣式 */
+        #user-greeting { text-align: right; display: none; }
+        .uid-text { font-weight: 900; font-size: 1.1em; color: #2c3e50; display: block; }
+        .badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 0.85em; margin-top: 4px; }
+        .badge-partner { background: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; }
+        .badge-vip { background: #fff8e1; color: #f57f17; border: 1px solid #ffecb3; }
+
+        /* 上傳區塊 */
+        #drop-zone { 
+            border: 3px dashed #cbd5e0; border-radius: 10px; padding: 50px; text-align: center; 
+            color: #718096; transition: 0.3s; cursor: pointer; margin-bottom: 20px;
+        }
+        #drop-zone:hover, #drop-zone.dragover { border-color: #4299e1; background: #ebf8ff; color: #2b6cb0; }
+        
+        /* 圖表區 */
+        #chart-area { display: none; }
+        .chart-container { position: relative; height: 400px; width: 100%; }
+        
+        /* 狀態訊息 */
+        #status-msg { color: #e53e3e; margin-top: 10px; display: none; font-weight: bold; }
+    </style>
 </head>
 <body>
-    <h1>🚀 StockLab 戰情室連線成功！</h1>
-    <p>這是我的第一個選股分析頁面。</p>
+
+<div class="container">
+    <div class="header">
+        <div class="brand">🚀 StockLab 戰情室</div>
+        <div id="user-greeting"></div>
+    </div>
+
+    <div id="drop-zone">
+        <h3>📂 請將 XQ 選股 CSV 檔案拖曳至此</h3>
+        <p>或點擊選擇檔案 (系統將自動驗證權限)</p>
+        <input type="file" id="fileInput" accept=".csv" style="display:none">
+        <div id="status-msg"></div>
+    </div>
+
+    <div id="chart-area">
+        <h2 id="report-title">📊 分析報表</h2>
+        <div class="chart-container">
+            <canvas id="stockChart"></canvas>
+        </div>
+        <p style="text-align:center; color:#888; margin-top:10px; font-size: 0.9em;">(資料來源：您的 XQ 選股 CSV)</p>
+    </div>
+</div>
+
+<script>
+    // ================= CONFIG =================
+    // 您的 Google Script 網址 (已自動填入)
+    const LOG_API_URL = "https://script.google.com/macros/s/AKfycbyw83nI4PkO7IZGR39ZJ9spJhPcaba4BarxrH53TyQItOimloP9ont3gBmDDmn0ienw/exec"; 
+    // ==========================================
+
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('fileInput');
+    const statusMsg = document.getElementById('status-msg');
+
+    // 拖曳事件綁定
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', (e) => { if (e.target.files.length) handleFile(e.target.files[0]); });
+
+    function handleFile(file) {
+        statusMsg.style.display = 'none';
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            // XQ 匯出通常是 Big5，若亂碼請改用 Big5 讀取，這裡暫設 UTF-8 方便測試
+            // 若 XQ 匯出的 CSV 是繁體中文，可能需要用 new TextDecoder("big5").decode(...)
+            // 這裡先用最通用的方式讀取
+            parseAndValidate(e.target.result);
+        };
+        // 嘗試讀取 (若 XQ 預設是 Big5，建議之後調整 reader 參數)
+        reader.readAsText(file); 
+    }
+
+    function parseAndValidate(csvText) {
+        const lines = csvText.trim().split(/\r?\n/);
+        if (lines.length < 2) {
+            showError("❌ 檔案內容為空");
+            return;
+        }
+
+        // 1. 解析表頭找簽章
+        // 預期格式: "日期#驗證碼-類別-帳號-到期日", "代碼", ...
+        const headerLine = lines[0];
+        const headers = headerLine.split(',');
+        
+        // 尋找包含 "日期#" 的欄位
+        const sigColIndex = headers.findIndex(h => h.includes('日期#'));
+        
+        if (sigColIndex === -1) {
+            showError("❌ 驗證失敗：這不是 StockLab 專用 CSV (缺少簽章)");
+            // 雖然失敗，也偷偷記一筆 Unknown
+            sendLog("Unknown", "0", "NoSignature");
+            return;
+        }
+
+        // 2. 拆解簽章
+        // headers[sigColIndex] 可能是: "日期#5291-2-DavidWu-20260331"
+        const rawHeader = headers[sigColIndex].replace(/"/g, '').trim(); // 去掉引號
+        const rawSig = rawHeader.split('#')[1]; // 取得 # 後面的字串
+        
+        if (!rawSig) {
+            showError("❌ 簽章格式錯誤");
+            return;
+        }
+
+        const parts = rawSig.split('-'); // [驗證碼, 類別, 帳號, 到期日]
+        if (parts.length < 4) {
+            showError("❌ 簽章資訊不完整");
+            return;
+        }
+
+        const sigCode = parseInt(parts[0]);
+        const type = parts[1];
+        const uid = parts[2];
+        const expiry = parts[3];
+
+        // 3. 數學驗證 (防偽)
+        // 需取得第一筆資料的日期
+        const firstRow = lines[1].split(',');
+        const dateStr = firstRow[sigColIndex].replace(/"/g, '').trim(); // 20260211
+        const dateValue = parseInt(dateStr); 
+        
+        if (isNaN(dateValue)) {
+             showError("❌ 日期讀取錯誤，請確認 CSV 格式");
+             return;
+        }
+
+        // ★ 驗證公式：(日期 * 3 + 888) % 10000
+        const expectedCode = (dateValue * 3 + 888) % 10000;
+
+        if (sigCode !== expectedCode) {
+            showError(`❌ 驗證失敗：檔案可能已被竄改 (Code: ${sigCode} vs ${expectedCode})`);
+            sendLog(uid, type, "InvalidHash");
+            return;
+        }
+
+        // 4. 驗證成功！
+        // 顯示招呼語
+        showGreeting(uid, type, expiry);
+        
+        // 記錄 Log (成功)
+        sendLog(uid, type, "Valid");
+
+        // 隱藏上傳區，顯示圖表
+        document.getElementById('drop-zone').style.display = 'none';
+        document.getElementById('chart-area').style.display = 'block';
+        
+        // 繪製圖表 (目前先用假資料展示，之後我們會接上真實 CSV 數據)
+        drawChart();
+    }
+
+    function showGreeting(uid, type, expiry) {
+        const el = document.getElementById('user-greeting');
+        let html = '';
+        if (type === '1') {
+            html = `<span class="uid-text">${uid}</span><span class="badge badge-partner">🤝 綁定合作夥伴</span>`;
+        } else {
+            // 簡單格式化日期
+            const d = expiry; 
+            const dateStr = d.length === 8 ? `${d.substr(0,4)}/${d.substr(4,2)}/${d.substr(6,2)}` : d;
+            html = `<span class="uid-text">${uid}</span><span class="badge badge-vip">👑 VIP (~${dateStr})</span>`;
+        }
+        el.innerHTML = html;
+        el.style.display = 'block';
+    }
+
+    function showError(msg) {
+        statusMsg.innerText = msg;
+        statusMsg.style.display = 'block';
+    }
+
+    function sendLog(uid, type, status) {
+        // 使用 no-cors 模式發送
+        const url = `${LOG_API_URL}?uid=${encodeURIComponent(uid)}&type=${type}&status=${status}`;
+        fetch(url, { method: 'POST', mode: 'no-cors' });
+    }
+
+    function drawChart() {
+        const ctx = document.getElementById('stockChart').getContext('2d');
+        // 範例圖表：展示 PR 與 VR
+        new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['台積電', '聯發科', '長榮', '陽明', '萬海'],
+                datasets: [{
+                    label: '籌碼 PR 值',
+                    data: [85, 72, 90, 45, 60],
+                    backgroundColor: 'rgba(54, 162, 235, 0.6)'
+                }, {
+                    label: '量能 VR 值',
+                    data: [60, 50, 80, 30, 95],
+                    backgroundColor: 'rgba(255, 99, 132, 0.6)'
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+    }
+</script>
 </body>
 </html>

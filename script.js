@@ -1,295 +1,159 @@
 // ==========================================
-// script.js - v2.0 (Full Code)
+// trend-modal.js - v7.1 (Single Page Adapter)
 // ==========================================
+// 依賴: LightweightCharts (CDN 需在 index.html 引入)
 
-// 1. 介面控制
-const dropZone = document.getElementById('drop-zone');
-const fileInput = document.getElementById('fileInput');
-const errorMsg = document.getElementById('error-msg');
-const reportContainer = document.getElementById('report-container');
+window.TrendModal = {
+    chart: null,
+    series: {}, 
+    modalId: 'trend-modal-overlay',
+    toolTipId: 'tm-chart-tooltip',
+    markerLayerId: 'tm-marker-layer',
+    currentId: null,
 
-// 事件監聽
-if (dropZone) {
-    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-blue-500'); });
-    dropZone.addEventListener('dragleave', (e) => { e.preventDefault(); dropZone.classList.remove('border-blue-500'); });
-    dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('border-blue-500'); handleFile(e.dataTransfer.files[0]); });
-    dropZone.onclick = () => fileInput.click();
-}
-if (fileInput) fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+    // 初始化 Modal 結構 (如果不存在)
+    init: function() {
+        if (document.getElementById(this.modalId)) return;
 
-// 2. 檔案處理
-function handleFile(file) {
-    if (!file) return;
-    if (errorMsg) errorMsg.classList.add('hidden');
-    
-    const reader = new FileReader();
-    reader.onload = (e) => processCSV(e.target.result);
-    // 強制 Big5 讀取 (符合 XQ 格式)
-    reader.readAsText(file, 'Big5');
-}
-
-// 3. 核心處理
-function processCSV(csvText) {
-    const lines = csvText.trim().split(/\r?\n/);
-    
-    // A. 定位表頭 (找 TradeDate#)
-    let headerIndex = -1;
-    let headers = [];
-    
-    for (let i = 0; i < lines.length; i++) {
-        if (lines[i].includes('TradeDate#')) {
-            headerIndex = i;
-            headers = lines[i].split(',').map(h => h.trim().replace(/"/g, ''));
-            break;
-        }
-    }
-
-    if (headerIndex === -1) return showError("❌ 格式錯誤：找不到簽章欄位 (TradeDate#)");
-
-    // B. 防偽驗證
-    const sigColIndex = headers.findIndex(h => h.startsWith('TradeDate#'));
-    const headerString = headers[sigColIndex];
-    
-    if (lines.length <= headerIndex + 1) return showError("❌ 檔案無資料");
-    
-    // 取得日期字串 (XQ 格式: 20260212/20260211...)
-    let rawDateStr = lines[headerIndex + 1].split(',')[sigColIndex].trim().replace(/"/g, '');
-    let firstDate = rawDateStr.includes('/') ? rawDateStr.split('/')[0] : rawDateStr;
-
-    const isSafe = verifyCSV(headerString, firstDate);
-    if (!isSafe) return showError("❌ 驗證失敗：防偽簽章不符");
-
-    const userInfo = parseXQSignature(headerString);
-    if (userInfo.isExpired) return showError(`❌ 權限已於 ${userInfo.date} 到期`);
-
-    showUserStatus(userInfo);
-
-    // C. 資料轉換 (模擬 PHP 輸出的 JSON 結構)
-    const stockJson = {
-        status: 'ok',
-        mode: 'full',
-        dates: rawDateStr.split('/'), // 所有歷史日期
-        names: {},
-        data: {}
-    };
-
-    // 動態欄位對應 (Mapping)
-    const col = (name) => headers.findIndex(h => h === name || h === name.replace(/"/g, ''));
-    
-    // 根據 data_loader.php 的 $keys 設定
-    const keyMap = {
-        'id': col('代碼'),
-        'name': col('商品'),
-        'date': sigColIndex,
-        'open': col('Open'),
-        'high': col('High'),
-        'low': col('Low'),
-        'close': col('Close'),
-        'vol': col('Volume'),
-        'p_rank': col('PriceRank'),
-        'v_rank': col('VolRank'),
-        'sma20': col('Sma20'),
-        'sma50': col('Sma50'),
-        'sma150': col('Sma150'),
-        'sma200': col('Sma200'),
-        'volhigh': col('VolHigh')
-    };
-
-    for (let i = headerIndex + 1; i < lines.length; i++) {
-        const row = lines[i].split(',').map(c => c.trim().replace(/"/g, ''));
-        if (row.length < 5) continue;
-
-        // 確保欄位存在才讀取
-        const idIdx = keyMap.id;
-        const nameIdx = keyMap.name;
-        
-        if (idIdx === -1 || nameIdx === -1) continue;
-
-        const id = row[idIdx].replace('.TW', '');
-        const name = row[nameIdx];
-
-        if (id && name) {
-            stockJson.names[id] = name;
-            
-            // 建立單一股票資料物件
-            const stockObj = {};
-            
-            // 輔助函式：解析 '/'-separated string to array
-            const parseArr = (idx) => {
-                if (idx === -1 || !row[idx]) return [];
-                return row[idx].split('/').map(v => parseFloat(v) || 0);
-            };
-
-            // 填入資料 (完全比照 PHP $keys)
-            stockObj.open = parseArr(keyMap.open);
-            stockObj.high = parseArr(keyMap.high);
-            stockObj.low = parseArr(keyMap.low);
-            stockObj.close = parseArr(keyMap.close);
-            stockObj.vol = parseArr(keyMap.vol);
-            stockObj.p_rank = parseArr(keyMap.p_rank);
-            stockObj.v_rank = parseArr(keyMap.v_rank);
-            stockObj.sma20 = parseArr(keyMap.sma20);
-            stockObj.sma50 = parseArr(keyMap.sma50);
-            stockObj.sma150 = parseArr(keyMap.sma150);
-            stockObj.sma200 = parseArr(keyMap.sma200);
-            
-            if (keyMap.volhigh > -1 && row[keyMap.volhigh]) {
-                stockObj.volhigh = row[keyMap.volhigh].split('/'); 
-            }
-
-            stockJson.data[id] = stockObj;
-        }
-    }
-
-    // D. 注入 data-core.js
-    injectDataToCore(stockJson);
-
-    // E. 切換畫面與呼叫渲染
-    if (dropZone) dropZone.style.display = 'none';
-    if (reportContainer) reportContainer.classList.remove('hidden');
-    
-    // ★ 關鍵：呼叫 report-view.js 的主函式
-    if (typeof renderReportView === 'function') {
-        console.log("Calling renderReportView...");
-        renderReportView(); 
-    } else {
-        console.error("renderReportView is not defined. Please check report-view.js");
-        alert("錯誤：找不到列表渲染函式 (renderReportView)。請確認 report-view.js 是否已正確封裝。");
-    }
-}
-
-// 4. 輔助函式：注入資料到 data-core
-function injectDataToCore(stockJson) {
-    if (!window.csvDates) window.csvDates = [];
-    if (!window.stockNameMap) window.stockNameMap = {};
-    if (!window.fullStockData) window.fullStockData = {};
-    if (!window.csvStockData) window.csvStockData = {};
-    if (!window.csvBigOrderData) window.csvBigOrderData = {};
-    if (!window.csvCloseData) window.csvCloseData = {};
-    if (!window.csvVolHighData) window.csvVolHighData = {};
-
-    window.csvDates = stockJson.dates;
-    window.stockNameMap = stockJson.names;
-
-    const data = stockJson.data;
-    for (let id in data) {
-        window.fullStockData[id] = data[id];
-        // 取最新一筆 (Index 0) 作為列表顯示用
-        if (data[id].p_rank) window.csvStockData[id] = data[id].p_rank[0];
-        if (data[id].v_rank) window.csvBigOrderData[id] = data[id].v_rank[0];
-        if (data[id].close) window.csvCloseData[id] = data[id].close[0];
-        if (data[id].volhigh) window.csvVolHighData[id] = data[id].volhigh[0];
-    }
-    console.log("Data injected to Core:", Object.keys(window.fullStockData).length);
-}
-
-// 5. 錯誤顯示與 UI
-function showError(msg) {
-    if (errorMsg) {
-        errorMsg.textContent = msg;
-        errorMsg.classList.remove('hidden');
-    } else {
-        alert(msg);
-    }
-    return false;
-}
-
-function showUserStatus(info) {
-    const el = document.getElementById('user-status');
-    if (!el) return;
-    el.innerHTML = `
-        <div class="bg-white/90 backdrop-blur px-4 py-2 rounded-lg shadow border border-blue-100 flex items-center gap-3">
-            <div class="text-right">
-                <div class="text-xs text-gray-400">USER ID</div>
-                <div class="font-bold text-gray-700">${info.userID}</div>
-            </div>
-            <div class="h-8 w-px bg-gray-200"></div>
-            <div class="text-right">
-                <div class="text-xs text-gray-400">STATUS</div>
-                <div class="font-bold text-blue-600">${info.statusText}</div>
-            </div>
-             <div class="h-8 w-px bg-gray-200"></div>
-            <div class="text-right">
-                <div class="text-xs text-gray-400">EXPIRY</div>
-                <div class="font-bold ${info.isExpired ? 'text-red-500' : 'text-green-600'}">
-                    ${info.date}
+        const html = `
+        <div id="${this.modalId}" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:9999; backdrop-filter:blur(2px);">
+            <div style="position:relative; width:90%; max-width:1000px; height:80vh; margin:5vh auto; background:#1e222d; border-radius:8px; box-shadow:0 10px 25px rgba(0,0,0,0.5); display:flex; flex-direction:column; overflow:hidden;">
+                <div style="padding:15px; display:flex; justify-content:space-between; align-items:center; background:#2a2e39; color:#eee; border-bottom:1px solid #363c4e;">
+                    <div>
+                        <span id="tm-title-id" style="font-size:1.5em; font-weight:bold; color:#fbbf24;"></span>
+                        <span id="tm-title-name" style="margin-left:10px; color:#aaa;"></span>
+                    </div>
+                    <button onclick="document.getElementById('${this.modalId}').style.display='none'" style="background:none; border:none; color:#aaa; font-size:24px; cursor:pointer;">&times;</button>
+                </div>
+                <div id="tm-chart-container" style="position:relative; flex:1; width:100%;">
+                    <div id="${this.toolTipId}" style="position:absolute; display:none; padding:8px; box-sizing:border-box; font-size:12px; text-align:left; z-index:1000; top:12px; left:12px; pointer-events:none; border:1px solid; border-radius:2px; font-family:-apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; background:rgba(30, 34, 45, 0.9); color:white; border-color:rgba(30, 34, 45, 1);"></div>
                 </div>
             </div>
         </div>
-    `;
-}
+        `;
+        document.body.insertAdjacentHTML('beforeend', html);
+        
+        // 點擊背景關閉
+        document.getElementById(this.modalId).onclick = (e) => {
+            if (e.target.id === this.modalId) {
+                e.target.style.display = 'none';
+            }
+        };
+    },
 
-// 6. 防偽函式 (verifyCSV, parseXQSignature)
-function parseXQSignature(fullString) {
-    const HEADER = "TradeDate#";
-    if (!fullString || !fullString.startsWith(HEADER)) {
-        return { valid: false, message: "格式錯誤" };
-    }
-    const content = fullString.substring(HEADER.length);
-    const MAP_DATE = "QwErTyUiOp";
-    const MAP_ID   = "abcdefghij";
+    // 開啟圖表 (Entry Point)
+    open: function(id, name) {
+        this.init();
+        this.currentId = id;
+        
+        // 顯示 Modal
+        const modal = document.getElementById(this.modalId);
+        modal.style.display = 'block';
+        
+        // 更新標題
+        document.getElementById('tm-title-id').textContent = id;
+        document.getElementById('tm-title-name').textContent = name;
 
-    function decodeDigit(char) {
-        const idx = MAP_DATE.indexOf(char);
-        return idx > -1 ? idx.toString() : "?";
-    }
+        // 準備資料
+        // ★ 修正：直接從 window 讀取，而非 window.parent
+        const rawData = window.fullStockData[id];
+        const dates = window.csvDates;
 
-    if (content.length < 13) return { valid: false, message: "長度不足" };
-
-    const encSig    = content.substring(0, 4);
-    const encStatus = content.substring(4, 5); 
-    const encMMDD   = content.substring(5, 9); 
-    const encYYYY   = content.substring(content.length - 4); 
-    const encID     = content.substring(9, content.length - 4); 
-
-    let sigStr = "";
-    for (let c of encSig) sigStr += decodeDigit(c);
-    const signature = parseInt(sigStr, 10);
-
-    let yyyy = ""; for (let c of encYYYY) yyyy += decodeDigit(c);
-    let mmdd = ""; for (let c of encMMDD) mmdd += decodeDigit(c);
-    const fullDate = yyyy + mmdd;
-    const isPermanent = (fullDate === "13572468");
-
-    const status = decodeDigit(encStatus);
-    let isExpired = false;
-    
-    if (!isPermanent) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const expDate = new Date(parseInt(yyyy), parseInt(mmdd.substring(0, 2)) - 1, parseInt(mmdd.substring(2)));
-        if (expDate < today) {
-            isExpired = true;
+        if (!rawData || !dates) {
+            alert("無此個股資料");
+            modal.style.display = 'none';
+            return;
         }
+
+        this.renderChart(rawData, dates);
+    },
+
+    // 繪製 Lightweight Chart
+    renderChart: function(data, dates) {
+        const container = document.getElementById('tm-chart-container');
+        // 清除舊圖表 (如果是 Lightweight Charts 實例)
+        if (this.chart) {
+            this.chart.remove();
+            container.innerHTML = `<div id="${this.toolTipId}" ...></div>`; // 重置 Tooltip 結構
+        }
+
+        // 檢查庫是否存在
+        if (typeof LightweightCharts === 'undefined') {
+            container.innerHTML = '<div style="color:white; padding:20px;">錯誤：找不到 LightweightCharts 函式庫。請在 index.html 加入 CDN。</div>';
+            return;
+        }
+
+        // 建立圖表
+        this.chart = LightweightCharts.createChart(container, {
+            width: container.clientWidth,
+            height: container.clientHeight,
+            layout: { backgroundColor: '#1e222d', textColor: '#d1d4dc' },
+            grid: { vertLines: { color: '#2B2B43' }, horzLines: { color: '#2B2B43' } },
+            crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+            rightPriceScale: { borderColor: '#485c7b' },
+            timeScale: { borderColor: '#485c7b', rightOffset: 5 },
+        });
+
+        // 處理 K 線資料 (Mapping)
+        // 注意：data.close 是 [最新, 昨天, 前天...] (反向)
+        // Lightweight Charts 需要 { time, open, high, low, close } 且按時間升冪排列
+        const candleData = [];
+        const volData = [];
+        
+        // 資料長度取決於 close 陣列
+        const len = data.close.length;
+        
+        for (let i = len - 1; i >= 0; i--) {
+            // 日期轉換: 20260212 -> 2026-02-12
+            const dStr = dates[i];
+            if (!dStr) continue;
+            const fmtDate = `${dStr.substring(0,4)}-${dStr.substring(4,6)}-${dStr.substring(6,8)}`;
+            
+            candleData.push({
+                time: fmtDate,
+                open: data.open[i],
+                high: data.high[i],
+                low: data.low[i],
+                close: data.close[i]
+            });
+
+            // 顏色邏輯：收盤 >= 開盤 ? 紅 : 綠 (配合台股習慣：紅漲綠跌)
+            const isUp = data.close[i] >= data.open[i];
+            volData.push({
+                time: fmtDate,
+                value: data.vol[i],
+                color: isUp ? 'rgba(239, 68, 68, 0.5)' : 'rgba(34, 197, 94, 0.5)'
+            });
+        }
+
+        // K 線圖層
+        const candleSeries = this.chart.addCandlestickSeries({
+            upColor: '#ef4444', 
+            downColor: '#22c55e', 
+            borderUpColor: '#ef4444', 
+            borderDownColor: '#22c55e', 
+            wickUpColor: '#ef4444', 
+            wickDownColor: '#22c55e',
+        });
+        candleSeries.setData(candleData);
+
+        // 成交量圖層
+        const volumeSeries = this.chart.addHistogramSeries({
+            color: '#26a69a',
+            priceFormat: { type: 'volume' },
+            priceScaleId: '', // 疊加在主圖下層
+            scaleMargins: { top: 0.8, bottom: 0 },
+        });
+        volumeSeries.setData(volData);
+
+        // 自動縮放
+        this.chart.timeScale().fitContent();
+
+        // 處理視窗大小改變
+        new ResizeObserver(entries => {
+            if (entries.length === 0 || entries[0].target !== container) return;
+            const newRect = entries[0].contentRect;
+            this.chart.applyOptions({ width: newRect.width, height: newRect.height });
+        }).observe(container);
     }
-
-    let rawIDReversed = "";
-    for (let c of encID) {
-        const idx = MAP_ID.indexOf(c);
-        if (idx > -1) rawIDReversed += idx.toString();
-        else rawIDReversed += c;
-    }
-    const finalID = rawIDReversed.split("").reverse().join("");
-
-    return {
-        valid: true,
-        signature: signature,
-        userID: finalID,
-        date: isPermanent ? "無期限" : `${yyyy}/${mmdd.substring(0,2)}/${mmdd.substring(2)}`,
-        status: status, 
-        statusText: (status === "1") ? "綁定戶" : "VIP",
-        isExpired: isExpired,
-        rawDate: fullDate
-    };
-}
-
-function verifyCSV(headerString, firstDateValue) {
-    const info = parseXQSignature(headerString);
-    if (!info.valid) return false;
-
-    const cleanDateStr = firstDateValue.replace(/\//g, "").replace(/-/g, "");
-    const dataDate = parseInt(cleanDateStr, 10);
-    const calculatedSig = (dataDate * 3 + 888) % 10000;
-
-    return calculatedSig === info.signature;
-}
+};

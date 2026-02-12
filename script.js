@@ -1,12 +1,44 @@
 // ==========================================
-// script.js - v2.0 (Full Code)
+// script.js - v3.0 (IndexedDB Persistence)
 // ==========================================
+
+const DB_NAME = 'StockAppDB';
+const STORE_NAME = 'csvData';
+const DB_VERSION = 1;
 
 // 1. 介面控制
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('fileInput');
 const errorMsg = document.getElementById('error-msg');
 const reportContainer = document.getElementById('report-container');
+
+// 初始化：檢查是否有庫存資料
+document.addEventListener('DOMContentLoaded', async () => {
+    try {
+        const savedData = await loadFromDB();
+        if (savedData) {
+            console.log("Found saved data in IndexedDB, loading...");
+            // 恢復資料
+            injectDataToCore(savedData);
+            
+            // 顯示 UI
+            if (dropZone) dropZone.style.display = 'none';
+            if (reportContainer) reportContainer.classList.remove('hidden');
+            
+            // 驗證並顯示身分 (雖然是舊資料，但還是顯示一下當初的簽章資訊)
+            if (savedData.userInfo) {
+                showUserStatus(savedData.userInfo, true); // true 表示顯示清除按鈕
+            }
+
+            // 呼叫渲染
+            if (typeof renderReportView === 'function') {
+                renderReportView();
+            }
+        }
+    } catch (e) {
+        console.log("No saved data or load error:", e);
+    }
+});
 
 // 事件監聽
 if (dropZone) {
@@ -22,17 +54,29 @@ function handleFile(file) {
     if (!file) return;
     if (errorMsg) errorMsg.classList.add('hidden');
     
+    // 顯示讀取中...
+    if (dropZone) {
+        const originalText = dropZone.innerHTML;
+        dropZone.innerHTML = `<div class="text-blue-500 font-bold"><i class="fas fa-spinner fa-spin mr-2"></i>讀取與解析中...</div>`;
+    }
+
     const reader = new FileReader();
-    reader.onload = (e) => processCSV(e.target.result);
+    reader.onload = async (e) => {
+        const success = await processCSV(e.target.result);
+        if (!success && dropZone) {
+             // 失敗還原 UI
+             dropZone.innerHTML = `<i class="fas fa-cloud-upload-alt text-5xl text-blue-500 mb-4"></i><h2 class="text-2xl font-bold text-gray-700 mb-2">拖曳或點擊上傳 CSV</h2><p class="text-gray-400">支援 XS 選股匯出格式 (Big5)</p>`;
+        }
+    };
     // 強制 Big5 讀取 (符合 XQ 格式)
     reader.readAsText(file, 'Big5');
 }
 
 // 3. 核心處理
-function processCSV(csvText) {
+async function processCSV(csvText) {
     const lines = csvText.trim().split(/\r?\n/);
     
-    // A. 定位表頭 (找 TradeDate#)
+    // A. 定位表頭
     let headerIndex = -1;
     let headers = [];
     
@@ -52,7 +96,6 @@ function processCSV(csvText) {
     
     if (lines.length <= headerIndex + 1) return showError("❌ 檔案無資料");
     
-    // 取得日期字串 (XQ 格式: 20260212/20260211...)
     let rawDateStr = lines[headerIndex + 1].split(',')[sigColIndex].trim().replace(/"/g, '');
     let firstDate = rawDateStr.includes('/') ? rawDateStr.split('/')[0] : rawDateStr;
 
@@ -62,21 +105,20 @@ function processCSV(csvText) {
     const userInfo = parseXQSignature(headerString);
     if (userInfo.isExpired) return showError(`❌ 權限已於 ${userInfo.date} 到期`);
 
-    showUserStatus(userInfo);
+    showUserStatus(userInfo, true);
 
-    // C. 資料轉換 (模擬 PHP 輸出的 JSON 結構)
+    // C. 資料轉換
     const stockJson = {
         status: 'ok',
         mode: 'full',
-        dates: rawDateStr.split('/'), // 所有歷史日期
+        dates: rawDateStr.split('/'),
         names: {},
-        data: {}
+        data: {},
+        userInfo: userInfo // 把 User Info 也存進去
     };
 
-    // 動態欄位對應 (Mapping)
     const col = (name) => headers.findIndex(h => h === name || h === name.replace(/"/g, ''));
     
-    // 根據 data_loader.php 的 $keys 設定
     const keyMap = {
         'id': col('代碼'),
         'name': col('商品'),
@@ -99,10 +141,8 @@ function processCSV(csvText) {
         const row = lines[i].split(',').map(c => c.trim().replace(/"/g, ''));
         if (row.length < 5) continue;
 
-        // 確保欄位存在才讀取
         const idIdx = keyMap.id;
         const nameIdx = keyMap.name;
-        
         if (idIdx === -1 || nameIdx === -1) continue;
 
         const id = row[idIdx].replace('.TW', '');
@@ -110,17 +150,13 @@ function processCSV(csvText) {
 
         if (id && name) {
             stockJson.names[id] = name;
-            
-            // 建立單一股票資料物件
             const stockObj = {};
             
-            // 輔助函式：解析 '/'-separated string to array
             const parseArr = (idx) => {
                 if (idx === -1 || !row[idx]) return [];
                 return row[idx].split('/').map(v => parseFloat(v) || 0);
             };
 
-            // 填入資料 (完全比照 PHP $keys)
             stockObj.open = parseArr(keyMap.open);
             stockObj.high = parseArr(keyMap.high);
             stockObj.low = parseArr(keyMap.low);
@@ -141,24 +177,29 @@ function processCSV(csvText) {
         }
     }
 
-    // D. 注入 data-core.js
+    // D. 存入 IndexedDB (關鍵步驟)
+    try {
+        await saveToDB(stockJson);
+        console.log("Data saved to IndexedDB");
+    } catch (dbErr) {
+        console.error("Failed to save to DB:", dbErr);
+        // 存檔失敗不阻擋執行
+    }
+
+    // E. 注入並渲染
     injectDataToCore(stockJson);
 
-    // E. 切換畫面與呼叫渲染
     if (dropZone) dropZone.style.display = 'none';
     if (reportContainer) reportContainer.classList.remove('hidden');
     
-    // ★ 關鍵：呼叫 report-view.js 的主函式
     if (typeof renderReportView === 'function') {
-        console.log("Calling renderReportView...");
         renderReportView(); 
-    } else {
-        console.error("renderReportView is not defined. Please check report-view.js");
-        alert("錯誤：找不到列表渲染函式 (renderReportView)。請確認 report-view.js 是否已正確封裝。");
     }
+
+    return true;
 }
 
-// 4. 輔助函式：注入資料到 data-core
+// 4. 輔助函式：注入資料
 function injectDataToCore(stockJson) {
     if (!window.csvDates) window.csvDates = [];
     if (!window.stockNameMap) window.stockNameMap = {};
@@ -174,16 +215,62 @@ function injectDataToCore(stockJson) {
     const data = stockJson.data;
     for (let id in data) {
         window.fullStockData[id] = data[id];
-        // 取最新一筆 (Index 0) 作為列表顯示用
         if (data[id].p_rank) window.csvStockData[id] = data[id].p_rank[0];
         if (data[id].v_rank) window.csvBigOrderData[id] = data[id].v_rank[0];
         if (data[id].close) window.csvCloseData[id] = data[id].close[0];
         if (data[id].volhigh) window.csvVolHighData[id] = data[id].volhigh[0];
     }
-    console.log("Data injected to Core:", Object.keys(window.fullStockData).length);
 }
 
-// 5. 錯誤顯示與 UI
+// 5. IndexedDB 封裝 (Save/Load)
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME);
+            }
+        };
+        request.onsuccess = (e) => resolve(e.target.result);
+        request.onerror = (e) => reject(e.target.error);
+    });
+}
+
+async function saveToDB(data) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        store.put(data, 'latest');
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject(e.target.error);
+    });
+}
+
+async function loadFromDB() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        const request = store.get('latest');
+        request.onsuccess = (e) => resolve(e.target.result);
+        request.onerror = (e) => reject(e.target.error);
+    });
+}
+
+async function clearDB() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        store.clear();
+        tx.oncomplete = () => resolve();
+        tx.onerror = (e) => reject(e.target.error);
+    });
+}
+
+// 6. UI 輔助
 function showError(msg) {
     if (errorMsg) {
         errorMsg.textContent = msg;
@@ -194,38 +281,53 @@ function showError(msg) {
     return false;
 }
 
-function showUserStatus(info) {
+function showUserStatus(info, showResetBtn = false) {
     const el = document.getElementById('user-status');
     if (!el) return;
     
-    // 直式卡片設計
-    // w-28: 固定寬度
-    // flex-col: 直向排列
+    // 直式卡片設計 (含重新上傳按鈕)
+    let btnHtml = '';
+    if (showResetBtn) {
+        btnHtml = `
+            <div class="w-full pt-2 border-t border-gray-100 mt-1">
+                <button onclick="handleReset()" class="w-full text-xs text-gray-500 hover:text-red-500 hover:bg-red-50 py-1 rounded transition-colors flex items-center justify-center gap-1">
+                    <i class="fas fa-trash-alt"></i> 重新上傳
+                </button>
+            </div>
+        `;
+    }
+
     el.innerHTML = `
         <div class="bg-white/95 backdrop-blur p-3 rounded-xl shadow-lg border border-gray-200 flex flex-col items-center gap-2 w-32 transition-all hover:shadow-xl hover:scale-105">
-            
             <div class="text-center w-full border-b border-gray-100 pb-2">
                 <div class="text-[10px] text-gray-400 uppercase tracking-wider">User ID</div>
                 <div class="font-bold text-gray-800 text-lg leading-tight font-mono">${info.userID}</div>
             </div>
-
             <div class="w-full text-center">
                 <span class="inline-block px-3 py-1 bg-blue-50 text-blue-600 text-xs font-bold rounded-full border border-blue-100">
                     ${info.statusText}
                 </span>
             </div>
-
             <div class="text-center w-full pt-1">
                 <div class="text-[10px] text-gray-400">EXPIRY</div>
                 <div class="font-medium text-xs ${info.isExpired ? 'text-red-500' : 'text-green-600'}">
                     ${info.date}
                 </div>
             </div>
+            ${btnHtml}
         </div>
     `;
 }
 
-// 6. 防偽函式 (verifyCSV, parseXQSignature)
+// 清除資料並重整
+window.handleReset = async function() {
+    if (confirm("確定要清除目前資料並重新上傳嗎？")) {
+        await clearDB();
+        location.reload();
+    }
+}
+
+// 7. 防偽函式
 function parseXQSignature(fullString) {
     const HEADER = "TradeDate#";
     if (!fullString || !fullString.startsWith(HEADER)) {

@@ -197,21 +197,27 @@ function showError(msg) {
 function showUserStatus(info) {
     const el = document.getElementById('user-status');
     if (!el) return;
+    
+    // 直式卡片設計
+    // w-28: 固定寬度
+    // flex-col: 直向排列
     el.innerHTML = `
-        <div class="bg-white/90 backdrop-blur px-4 py-2 rounded-lg shadow border border-blue-100 flex items-center gap-3">
-            <div class="text-right">
-                <div class="text-xs text-gray-400">USER ID</div>
-                <div class="font-bold text-gray-700">${info.userID}</div>
+        <div class="bg-white/95 backdrop-blur p-3 rounded-xl shadow-lg border border-gray-200 flex flex-col items-center gap-2 w-32 transition-all hover:shadow-xl hover:scale-105">
+            
+            <div class="text-center w-full border-b border-gray-100 pb-2">
+                <div class="text-[10px] text-gray-400 uppercase tracking-wider">User ID</div>
+                <div class="font-bold text-gray-800 text-lg leading-tight font-mono">${info.userID}</div>
             </div>
-            <div class="h-8 w-px bg-gray-200"></div>
-            <div class="text-right">
-                <div class="text-xs text-gray-400">STATUS</div>
-                <div class="font-bold text-blue-600">${info.statusText}</div>
+
+            <div class="w-full text-center">
+                <span class="inline-block px-3 py-1 bg-blue-50 text-blue-600 text-xs font-bold rounded-full border border-blue-100">
+                    ${info.statusText}
+                </span>
             </div>
-             <div class="h-8 w-px bg-gray-200"></div>
-            <div class="text-right">
-                <div class="text-xs text-gray-400">EXPIRY</div>
-                <div class="font-bold ${info.isExpired ? 'text-red-500' : 'text-green-600'}">
+
+            <div class="text-center w-full pt-1">
+                <div class="text-[10px] text-gray-400">EXPIRY</div>
+                <div class="font-medium text-xs ${info.isExpired ? 'text-red-500' : 'text-green-600'}">
                     ${info.date}
                 </div>
             </div>

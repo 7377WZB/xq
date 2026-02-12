@@ -39,37 +39,51 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
-// 事件監聽 (修復 點擊跳兩次視窗問題)
+// 事件監聽 (修復：改用覆蓋式寫法，徹底解決跳兩次或無反應問題)
 if (dropZone && fileInput) {
-    // A. 移除 HTML 內建的 onclick，避免衝突
-    dropZone.onclick = null; 
+    
+    // 1. 強制移除 HTML 標籤上的 onclick 屬性 (避免干擾)
     dropZone.removeAttribute('onclick');
 
-    // B. 拖曳事件
-    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-blue-500'); });
-    dropZone.addEventListener('dragleave', (e) => { e.preventDefault(); dropZone.classList.remove('border-blue-500'); });
-    dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('border-blue-500'); handleFile(e.dataTransfer.files[0]); });
+    // 2. 拖曳相關事件 (使用 on... 語法，防止重複疊加監聽器)
+    dropZone.ondragover = (e) => { 
+        e.preventDefault(); 
+        dropZone.classList.add('border-blue-500'); 
+    };
     
-    // C. 點擊上傳區 -> 觸發 input
-    dropZone.addEventListener('click', (e) => {
-        // 如果點擊的不是 input 本身，才觸發 click
-        if (e.target !== fileInput) {
-            fileInput.click();
-        }
-    });
+    dropZone.ondragleave = (e) => { 
+        e.preventDefault(); 
+        dropZone.classList.remove('border-blue-500'); 
+    };
+    
+    dropZone.ondrop = (e) => { 
+        e.preventDefault(); 
+        dropZone.classList.remove('border-blue-500'); 
+        handleFile(e.dataTransfer.files[0]); 
+    };
+    
+    // 3. 點擊上傳區 -> 觸發 Input
+    dropZone.onclick = (e) => {
+        // 阻止預設行為，直接觸發 input 點擊
+        e.preventDefault();
+        fileInput.click();
+    };
 
-    // D. Input 事件處理 (關鍵修復)
-    // 阻止 Input 的點擊訊號回傳給 dropZone
-    fileInput.addEventListener('click', (e) => e.stopPropagation());
+    // 4. Input 事件 (關鍵！)
+    // 當 input 被程式觸發點擊時，必須阻止事件冒泡回到 dropZone
+    // 否則會形成無窮迴圈：dropZone點擊 -> input點擊 -> 冒泡回dropZone -> dropZone點擊...
+    fileInput.onclick = (e) => {
+        e.stopPropagation();
+    };
     
-    // 檔案選取後處理
-    fileInput.addEventListener('change', (e) => {
+    // 檔案變更後處理
+    fileInput.onchange = (e) => {
         if (e.target.files && e.target.files.length > 0) {
             handleFile(e.target.files[0]);
-            // 清空 value，確保下次選同一個檔案也能觸發
+            // 清空 value，確保下次選同一個檔案也能觸發 change
             fileInput.value = ''; 
         }
-    });
+    };
 }
 
 // 2. 檔案處理

@@ -255,7 +255,7 @@ function getHeatmapStyle(val) {
 
     // 97分以上：強調顯示 (亮粉紅底、白字、特大粗體)
     if (v >= 97) {
-        return "background-color: #C71585; color: #fff; font-size: 1.1em; font-weight: 900;"; 
+        return "background-color: #C71585; color: #fff; font-size: 1em; font-weight: 900;"; 
         // 註: font-size 我稍微調小至 1.1em 以免撐破表格，您可自行改回 1.3em
     }
 

@@ -75,8 +75,9 @@
         if (lines.length < 2) return showError("❌ 檔案內容為空");
 
         // 1. 取得 Header (第一欄)
-        // CSV 可能有 BOM (\ufeff)，需過濾
         const headers = lines[0].split(',');
+        
+        // ★ 修正：去除 BOM 與 雙引號
         let firstHeader = headers[0].trim().replace(/"/g, '');
         if (firstHeader.charCodeAt(0) === 0xFEFF) {
             firstHeader = firstHeader.substr(1);
@@ -84,14 +85,13 @@
         
         // 2. 取得第一筆資料的日期 (第一欄)
         const firstDataRow = lines[1].split(',');
-        const firstDateVal = firstDataRow[0].trim(); // 例如 "20260212"
+        // ★ 修正：日期也建議去除雙引號，以免 parseInt 讀到非數字
+        const firstDateVal = firstDataRow[0].trim().replace(/"/g, ''); 
 
-        // 3. 【關鍵】執行新版防偽驗證
-        // 呼叫 verifyCSV (它會自動呼叫 parseXQSignature)
+        // 3. 執行防偽驗證
         const isSafe = verifyCSV(firstHeader, firstDateVal);
 
         if (!isSafe) {
-            // 驗證失敗，阻擋執行
             sendLog("Unknown", "0", "InvalidSignature");
             return showError("❌ 驗證失敗：防偽簽章不符或檔案遭篡改");
         }
@@ -99,7 +99,6 @@
         // 4. 驗證通過，解析使用者資訊
         const userInfo = parseXQSignature(firstHeader);
         
-        // 檢查是否過期 (雖然 XS 擋過了，前端再擋一次保險)
         if (userInfo.isExpired) {
             sendLog(userInfo.userID, userInfo.status, "Expired");
             return showError(`❌ 您的權限已於 ${userInfo.date} 到期`);
@@ -110,8 +109,7 @@
         sendLog(userInfo.userID, userInfo.status, "Valid");
 
 
-        // 5. 開始解析數據繪圖 (維持原有的繪圖邏輯)
-        // 這裡我們做一個聰明的搜尋：找 "名稱", "PR", "VR" 所在的欄位
+        // 5. 解析數據繪圖
         const nameIdx = headers.findIndex(h => h.includes('名稱'));
         const prIdx = headers.findIndex(h => h.toUpperCase().includes('PR')); 
         const vrIdx = headers.findIndex(h => h.toUpperCase().includes('VR'));
@@ -130,12 +128,12 @@
             const pr = prIdx > -1 ? row[prIdx] : row[3];
             const vr = vrIdx > -1 ? row[vrIdx] : row[4];
 
-            chartData.names.push(name.replace(/"/g, ''));
-            chartData.prs.push(parseFloat(pr));
-            chartData.vrs.push(parseFloat(vr));
+            // 確保數據也沒有引號
+            if(name) chartData.names.push(name.replace(/"/g, ''));
+            if(pr) chartData.prs.push(parseFloat(pr.replace(/"/g, '')));
+            if(vr) chartData.vrs.push(parseFloat(vr.replace(/"/g, '')));
         }
 
-        // 顯示圖表區
         document.getElementById('drop-zone').style.display = 'none';
         document.getElementById('chart-area').style.display = 'block';
         drawChart(chartData);

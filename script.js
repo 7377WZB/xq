@@ -1,5 +1,5 @@
 // ==========================================
-// script.js - v3.0 (IndexedDB Persistence)
+// script.js - v3.2 (Final: IndexedDB + UI + Event Fix)
 // ==========================================
 
 const DB_NAME = 'StockAppDB';
@@ -18,19 +18,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         const savedData = await loadFromDB();
         if (savedData) {
             console.log("Found saved data in IndexedDB, loading...");
-            // 恢復資料
             injectDataToCore(savedData);
             
-            // 顯示 UI
+            // 隱藏上傳區，顯示報表區
             if (dropZone) dropZone.style.display = 'none';
             if (reportContainer) reportContainer.classList.remove('hidden');
             
-            // 驗證並顯示身分 (雖然是舊資料，但還是顯示一下當初的簽章資訊)
+            // 顯示身分
             if (savedData.userInfo) {
-                showUserStatus(savedData.userInfo, true); // true 表示顯示清除按鈕
+                showUserStatus(savedData.userInfo, true);
             }
 
-            // 呼叫渲染
+            // 呼叫報表渲染
             if (typeof renderReportView === 'function') {
                 renderReportView();
             }
@@ -40,22 +39,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 });
 
-// 事件監聽
-if (dropZone) {
+// 事件監聽 (修復 點擊跳兩次視窗問題)
+if (dropZone && fileInput) {
+    // A. 移除 HTML 內建的 onclick，避免衝突
+    dropZone.onclick = null; 
+    dropZone.removeAttribute('onclick');
+
+    // B. 拖曳事件
     dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-blue-500'); });
     dropZone.addEventListener('dragleave', (e) => { e.preventDefault(); dropZone.classList.remove('border-blue-500'); });
     dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('border-blue-500'); handleFile(e.dataTransfer.files[0]); });
     
-    // 點擊區域時觸發檔案選擇
-    dropZone.onclick = () => fileInput.click();
-}
+    // C. 點擊上傳區 -> 觸發 input
+    dropZone.addEventListener('click', (e) => {
+        // 如果點擊的不是 input 本身，才觸發 click
+        if (e.target !== fileInput) {
+            fileInput.click();
+        }
+    });
 
-if (fileInput) {
-    // ★ 關鍵修正：阻止 input 的點擊事件冒泡傳回 dropZone，防止視窗跳出兩次
+    // D. Input 事件處理 (關鍵修復)
+    // 阻止 Input 的點擊訊號回傳給 dropZone
     fileInput.addEventListener('click', (e) => e.stopPropagation());
     
-    // 檔案變更監聽
-    fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+    // 檔案選取後處理
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+            handleFile(e.target.files[0]);
+            // 清空 value，確保下次選同一個檔案也能觸發
+            fileInput.value = ''; 
+        }
+    });
 }
 
 // 2. 檔案處理
@@ -63,21 +77,28 @@ function handleFile(file) {
     if (!file) return;
     if (errorMsg) errorMsg.classList.add('hidden');
     
-    // 顯示讀取中...
+    // 顯示讀取中狀態
     if (dropZone) {
-        const originalText = dropZone.innerHTML;
-        dropZone.innerHTML = `<div class="text-blue-500 font-bold"><i class="fas fa-spinner fa-spin mr-2"></i>讀取與解析中...</div>`;
+        // 暫存原本內容以便失敗時還原 (簡單做)
+        dropZone.setAttribute('data-original', dropZone.innerHTML);
+        dropZone.innerHTML = `<div class="text-blue-500 font-bold text-xl"><i class="fas fa-spinner fa-spin mr-2"></i>讀取與解析中...</div>`;
     }
 
     const reader = new FileReader();
     reader.onload = async (e) => {
         const success = await processCSV(e.target.result);
         if (!success && dropZone) {
-             // 失敗還原 UI
-             dropZone.innerHTML = `<i class="fas fa-cloud-upload-alt text-5xl text-blue-500 mb-4"></i><h2 class="text-2xl font-bold text-gray-700 mb-2">拖曳或點擊上傳 CSV</h2><p class="text-gray-400">支援 XS 選股匯出格式 (Big5)</p>`;
+             // 失敗還原 UI (這裡簡單重寫 HTML)
+             dropZone.innerHTML = `
+                <div class="bg-white p-10 rounded-xl shadow-lg text-center border-2 border-dashed border-blue-300 hover:border-blue-500 transition-colors cursor-pointer">
+                    <i class="fas fa-cloud-upload-alt text-5xl text-blue-500 mb-4"></i>
+                    <h2 class="text-2xl font-bold text-gray-700 mb-2">拖曳或點擊上傳 CSV</h2>
+                    <p class="text-gray-400">支援 XS 選股匯出格式 (Big5)</p>
+                </div>`;
+             // 重新綁定事件太複雜，建議使用者重新整理，或直接顯示錯誤訊息即可
         }
     };
-    // 強制 Big5 讀取 (符合 XQ 格式)
+    // 強制 Big5 讀取
     reader.readAsText(file, 'Big5');
 }
 
@@ -114,6 +135,7 @@ async function processCSV(csvText) {
     const userInfo = parseXQSignature(headerString);
     if (userInfo.isExpired) return showError(`❌ 權限已於 ${userInfo.date} 到期`);
 
+    // 立即顯示身分
     showUserStatus(userInfo, true);
 
     // C. 資料轉換
@@ -123,7 +145,7 @@ async function processCSV(csvText) {
         dates: rawDateStr.split('/'),
         names: {},
         data: {},
-        userInfo: userInfo // 把 User Info 也存進去
+        userInfo: userInfo
     };
 
     const col = (name) => headers.findIndex(h => h === name || h === name.replace(/"/g, ''));
@@ -186,13 +208,11 @@ async function processCSV(csvText) {
         }
     }
 
-    // D. 存入 IndexedDB (關鍵步驟)
+    // D. 存入 DB
     try {
         await saveToDB(stockJson);
-        console.log("Data saved to IndexedDB");
     } catch (dbErr) {
-        console.error("Failed to save to DB:", dbErr);
-        // 存檔失敗不阻擋執行
+        console.error("DB Save Error:", dbErr);
     }
 
     // E. 注入並渲染
@@ -231,7 +251,7 @@ function injectDataToCore(stockJson) {
     }
 }
 
-// 5. IndexedDB 封裝 (Save/Load)
+// 5. IndexedDB
 function openDB() {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -279,7 +299,7 @@ async function clearDB() {
     });
 }
 
-// 6. UI 輔助
+// 6. UI Helper
 function showError(msg) {
     if (errorMsg) {
         errorMsg.textContent = msg;
@@ -294,7 +314,6 @@ function showUserStatus(info, showResetBtn = false) {
     const el = document.getElementById('user-status');
     if (!el) return;
     
-    // 直式卡片設計 (含重新上傳按鈕)
     let btnHtml = '';
     if (showResetBtn) {
         btnHtml = `
@@ -328,7 +347,6 @@ function showUserStatus(info, showResetBtn = false) {
     `;
 }
 
-// 清除資料並重整
 window.handleReset = async function() {
     if (confirm("確定要清除目前資料並重新上傳嗎？")) {
         await clearDB();
@@ -336,7 +354,7 @@ window.handleReset = async function() {
     }
 }
 
-// 7. 防偽函式
+// 7. 防偽
 function parseXQSignature(fullString) {
     const HEADER = "TradeDate#";
     if (!fullString || !fullString.startsWith(HEADER)) {

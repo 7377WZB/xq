@@ -12,7 +12,7 @@ function renderReportView() {
     // 2. 參數設定
     const DISPLAY_LIMIT = 50; // ★ 關鍵：限制顯示數量，防止瀏覽器繪圖崩潰
     const allDates = window.csvDates || [];
-    const displayDates = allDates.slice(0, 15); // 顯示最近 15 天
+    const displayDates = allDates.slice(0, 50); // 顯示最近 15 天
 
     // 3. 資料準備與排序
     const stockIds = Object.keys(window.csvStockData || {});

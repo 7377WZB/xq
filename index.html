@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>用 XQ 的資料做點不一樣的！</title>
+    <title>🧪XQ CSV 實驗室</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: 'Segoe UI', sans-serif; background: #f4f7f6; display: flex; flex-direction: column; align-items: center; padding: 20px; }
@@ -26,7 +26,7 @@
 
 <div class="container">
     <div class="header">
-        <div class="brand">🚀 🚀 🚀 🚀 🚀 🚀 🚀 StockLab 戰情室</div>
+        <div class="brand">🧪XQ CSV 實驗室</div>
         <div id="user-greeting"></div>
     </div>
 
@@ -190,6 +190,93 @@
             }
         });
     }
+
+    /**
+     * 解析 XS 混淆字串
+     * 輸入範例: "TradeDate#WrTywQprQbbjKCOTSEQEU"
+     */
+    function parseXQSignature(fullString) {
+        const HEADER = "TradeDate#";
+        
+        // 1. 基礎檢核
+        if (!fullString || !fullString.startsWith(HEADER)) {
+            return { valid: false, message: "格式錯誤" };
+        }
+
+        // 移除 Header，取得內容本體
+        const content = fullString.substring(HEADER.length);
+        
+        // 定義對照表 (必須與 XS 完全一致)
+        const MAP_DATE = "QwErTyUiOp";   // 0-9
+        const MAP_ID   = "abcdefghij";   // 0-9
+
+        // 輔助函式: 還原單一字元 (查表 MAP_DATE)
+        function decodeDigit(char) {
+            const idx = MAP_DATE.indexOf(char);
+            return idx > -1 ? idx.toString() : "?";
+        }
+
+        // ==========================================
+        // 2. 切割字串
+        // 結構: [Sig:4] + [Status:1] + [MMDD:4] + [ID:變動] + [YYYY:4]
+        // ==========================================
+        
+        // 固定長度檢查
+        if (content.length < 13) return { valid: false, message: "長度不足" };
+
+        const encSig    = content.substring(0, 4);
+        const encStatus = content.substring(4, 5); // 第5碼
+        const encMMDD   = content.substring(5, 9); // 6-9碼
+        const encYYYY   = content.substring(content.length - 4); // 最後4碼
+        const encID     = content.substring(9, content.length - 4); // 中間剩餘部分
+
+        // ==========================================
+        // 3. 還原邏輯
+        // ==========================================
+
+        // A. 還原狀態 (1=正常, 2=過期)
+        const status = decodeDigit(encStatus);
+        const isExpired = (status !== "1"); 
+
+        // B. 還原日期 (YYYY + MMDD)
+        let yyyy = "";
+        for (let c of encYYYY) yyyy += decodeDigit(c);
+        
+        let mmdd = "";
+        for (let c of encMMDD) mmdd += decodeDigit(c);
+
+        const fullDate = yyyy + mmdd;
+        const isPermanent = (fullDate === "13572468"); // 特殊代碼
+
+        // C. 還原 ID (數字還原 + 字串反轉)
+        let rawIDReversed = "";
+        for (let c of encID) {
+            const idx = MAP_ID.indexOf(c);
+            if (idx > -1) {
+                rawIDReversed += idx.toString(); // a-j -> 0-9
+            } else {
+                rawIDReversed += c; // 原字元 (大寫字母)
+            }
+        }
+        // JS 反轉字串
+        const finalID = rawIDReversed.split("").reverse().join("");
+
+        // ==========================================
+        // 4. 回傳結果物件
+        // ==========================================
+        return {
+            valid: true,
+            userID: finalID,
+            date: isPermanent ? "無期限" : `${yyyy}/${mmdd.substring(0,2)}/${mmdd.substring(2)}`,
+            status: status, // 1 or 2
+            isExpired: isExpired,
+            rawDate: fullDate
+        };
+    }
+
+    // --- 測試範例 ---
+    // 假設輸入: "TradeDate#WrTywQprQbbjKCOTSEQEU" (WrTy=加密防偽, w=狀態1, QprQ=0930, bbjKCOTS=ID, EQEU=2026)
+    // console.log(parseXQSignature("TradeDate#WrTywQprQbbjKCOTSEQEU"));
 </script>
 </body>
 </html>

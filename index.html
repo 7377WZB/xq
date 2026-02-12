@@ -195,88 +195,115 @@
      * 解析 XS 混淆字串
      * 輸入範例: "TradeDate#WrTywQprQbbjKCOTSEQEU"
      */
-    function parseXQSignature(fullString) {
-        const HEADER = "TradeDate#";
-        
-        // 1. 基礎檢核
-        if (!fullString || !fullString.startsWith(HEADER)) {
-            return { valid: false, message: "格式錯誤" };
-        }
 
-        // 移除 Header，取得內容本體
-        const content = fullString.substring(HEADER.length);
-        
-        // 定義對照表 (必須與 XS 完全一致)
-        const MAP_DATE = "QwErTyUiOp";   // 0-9
-        const MAP_ID   = "abcdefghij";   // 0-9
-
-        // 輔助函式: 還原單一字元 (查表 MAP_DATE)
-        function decodeDigit(char) {
-            const idx = MAP_DATE.indexOf(char);
-            return idx > -1 ? idx.toString() : "?";
-        }
-
-        // ==========================================
-        // 2. 切割字串
-        // 結構: [Sig:4] + [Status:1] + [MMDD:4] + [ID:變動] + [YYYY:4]
-        // ==========================================
-        
-        // 固定長度檢查
-        if (content.length < 13) return { valid: false, message: "長度不足" };
-
-        const encSig    = content.substring(0, 4);
-        const encStatus = content.substring(4, 5); // 第5碼
-        const encMMDD   = content.substring(5, 9); // 6-9碼
-        const encYYYY   = content.substring(content.length - 4); // 最後4碼
-        const encID     = content.substring(9, content.length - 4); // 中間剩餘部分
-
-        // ==========================================
-        // 3. 還原邏輯
-        // ==========================================
-
-        // A. 還原狀態 (1=正常, 2=過期)
-        const status = decodeDigit(encStatus);
-        const isExpired = (status !== "1"); 
-
-        // B. 還原日期 (YYYY + MMDD)
-        let yyyy = "";
-        for (let c of encYYYY) yyyy += decodeDigit(c);
-        
-        let mmdd = "";
-        for (let c of encMMDD) mmdd += decodeDigit(c);
-
-        const fullDate = yyyy + mmdd;
-        const isPermanent = (fullDate === "13572468"); // 特殊代碼
-
-        // C. 還原 ID (數字還原 + 字串反轉)
-        let rawIDReversed = "";
-        for (let c of encID) {
-            const idx = MAP_ID.indexOf(c);
-            if (idx > -1) {
-                rawIDReversed += idx.toString(); // a-j -> 0-9
-            } else {
-                rawIDReversed += c; // 原字元 (大寫字母)
-            }
-        }
-        // JS 反轉字串
-        const finalID = rawIDReversed.split("").reverse().join("");
-
-        // ==========================================
-        // 4. 回傳結果物件
-        // ==========================================
-        return {
-            valid: true,
-            userID: finalID,
-            date: isPermanent ? "無期限" : `${yyyy}/${mmdd.substring(0,2)}/${mmdd.substring(2)}`,
-            status: status, // 1 or 2
-            isExpired: isExpired,
-            rawDate: fullDate
-        };
+/**
+ * 1. 解析 XS 混淆字串 (核心函式)
+ */
+function parseXQSignature(fullString) {
+    const HEADER = "TradeDate#";
+    
+    // 基礎檢核
+    if (!fullString || !fullString.startsWith(HEADER)) {
+        return { valid: false, message: "格式錯誤" };
     }
 
-    // --- 測試範例 ---
-    // 假設輸入: "TradeDate#WrTywQprQbbjKCOTSEQEU" (WrTy=加密防偽, w=狀態1, QprQ=0930, bbjKCOTS=ID, EQEU=2026)
-    // console.log(parseXQSignature("TradeDate#WrTywQprQbbjKCOTSEQEU"));
+    const content = fullString.substring(HEADER.length);
+    const MAP_DATE = "QwErTyUiOp";   // 0-9
+    const MAP_ID   = "abcdefghij";   // 0-9
+
+    function decodeDigit(char) {
+        const idx = MAP_DATE.indexOf(char);
+        return idx > -1 ? idx.toString() : "?";
+    }
+
+    if (content.length < 13) return { valid: false, message: "長度不足" };
+
+    const encSig    = content.substring(0, 4);
+    const encStatus = content.substring(4, 5); 
+    const encMMDD   = content.substring(5, 9); 
+    const encYYYY   = content.substring(content.length - 4); 
+    const encID     = content.substring(9, content.length - 4); 
+
+    // --- A. 還原防偽簽章 (這是新增的修改) ---
+    let sigStr = "";
+    for (let c of encSig) sigStr += decodeDigit(c);
+    const signature = parseInt(sigStr, 10); // 轉成數字，例如 1521
+
+    // --- B. 還原日期 (期限) ---
+    let yyyy = ""; for (let c of encYYYY) yyyy += decodeDigit(c);
+    let mmdd = ""; for (let c of encMMDD) mmdd += decodeDigit(c);
+    const fullDate = yyyy + mmdd;
+    const isPermanent = (fullDate === "13572468");
+
+    // --- C. 還原狀態 & 過期判斷 ---
+    const status = decodeDigit(encStatus);
+    let isExpired = false;
+    
+    if (!isPermanent) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        // JS 月份從 0 開始
+        const expDate = new Date(parseInt(yyyy), parseInt(mmdd.substring(0, 2)) - 1, parseInt(mmdd.substring(2)));
+        if (expDate < today) {
+            isExpired = true;
+        }
+    }
+
+    // --- D. 還原 ID ---
+    let rawIDReversed = "";
+    for (let c of encID) {
+        const idx = MAP_ID.indexOf(c);
+        if (idx > -1) rawIDReversed += idx.toString();
+        else rawIDReversed += c;
+    }
+    const finalID = rawIDReversed.split("").reverse().join("");
+
+    return {
+        valid: true,
+        signature: signature, // 回傳解碼後的簽章 (例如 1521)
+        userID: finalID,
+        date: isPermanent ? "無期限" : `${yyyy}/${mmdd.substring(0,2)}/${mmdd.substring(2)}`,
+        status: status, 
+        statusText: (status === "1") ? "綁定戶" : "VIP",
+        isExpired: isExpired,
+        rawDate: fullDate
+    };
+}
+
+/**
+ * 2. 驗證 CSV 是否偽造 (這是第二步的實作)
+ * * @param {string} headerString - CSV 第一欄的標頭 (包含 TradeDate#...)
+ * @param {string} firstDateValue - CSV 第一欄第一列的日期 (例如 "20260212")
+ */
+    function verifyCSV(headerString, firstDateValue) {
+        // 1. 先解析表頭
+        const info = parseXQSignature(headerString);
+        
+        if (!info.valid) {
+            console.error("表頭解析失敗:", info.message);
+            return false;
+        }
+
+        // 2. 取得 CSV 內的資料日期 (需轉為純數字)
+        // 假設傳入的是 "20260212" 或 "2026/02/12"
+        const cleanDateStr = firstDateValue.replace(/\//g, "").replace(/-/g, "");
+        const dataDate = parseInt(cleanDateStr, 10);
+
+        // 3. 執行防偽公式 (必須與 XS 一模一樣)
+        // 公式: (日期 * 3 + 888) % 10000
+        const calculatedSig = (dataDate * 3 + 888) % 10000;
+
+        // 4. 比對
+        if (calculatedSig !== info.signature) {
+            console.warn(`防偽警告: 計算值(${calculatedSig}) 與 簽章值(${info.signature}) 不符！`);
+            alert("警告：此檔案可能已經過期或是被篡改！(簽章驗證失敗)");
+            return false; // 驗證失敗
+        }
+
+        console.log("✅ 防偽驗證通過！");
+        return true; // 驗證成功
+    }
+
 </script>
 </body>
 </html>

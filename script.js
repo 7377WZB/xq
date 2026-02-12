@@ -1,5 +1,5 @@
 // ==========================================
-// script.js - v3.2 (Final: IndexedDB + UI + Event Fix)
+// script.js - v4.0 (Non-destructive Loading)
 // ==========================================
 
 const DB_NAME = 'StockAppDB';
@@ -12,115 +12,95 @@ const fileInput = document.getElementById('fileInput');
 const errorMsg = document.getElementById('error-msg');
 const reportContainer = document.getElementById('report-container');
 
-// 初始化：檢查是否有庫存資料
+// 初始化
 document.addEventListener('DOMContentLoaded', async () => {
+    // A. 自動建立 Loading 遮罩 (如果還沒有的話)
+    if (dropZone && !document.getElementById('loading-overlay')) {
+        const overlay = document.createElement('div');
+        overlay.id = 'loading-overlay';
+        overlay.className = 'absolute inset-0 bg-white/95 flex flex-col items-center justify-center z-10 hidden rounded-xl';
+        overlay.innerHTML = `
+            <div class="text-blue-500 font-bold text-xl animate-pulse">
+                <i class="fas fa-spinner fa-spin mr-2"></i>讀取與解析中...
+            </div>
+        `;
+        // 確保 dropZone 是 relative 定位，讓遮罩能蓋在裡面
+        if (!dropZone.classList.contains('relative')) dropZone.classList.add('relative');
+        dropZone.appendChild(overlay);
+    }
+
     try {
         const savedData = await loadFromDB();
         if (savedData) {
-            console.log("Found saved data in IndexedDB, loading...");
+            console.log("Loading saved data...");
             injectDataToCore(savedData);
-            
-            // 隱藏上傳區，顯示報表區
             if (dropZone) dropZone.style.display = 'none';
             if (reportContainer) reportContainer.classList.remove('hidden');
-            
-            // 顯示身分
-            if (savedData.userInfo) {
-                showUserStatus(savedData.userInfo, true);
-            }
-
-            // 呼叫報表渲染
-            if (typeof renderReportView === 'function') {
-                renderReportView();
-            }
+            if (savedData.userInfo) showUserStatus(savedData.userInfo, true);
+            if (typeof renderReportView === 'function') renderReportView();
         }
     } catch (e) {
-        console.log("No saved data or load error:", e);
+        console.log("No saved data:", e);
     }
 });
 
-// 事件監聽 (修復：改用覆蓋式寫法，徹底解決跳兩次或無反應問題)
+// 事件監聽 (單一入口，不與 HTML 衝突)
 if (dropZone && fileInput) {
-    
-    // 1. 強制移除 HTML 標籤上的 onclick 屬性 (避免干擾)
-    dropZone.removeAttribute('onclick');
-
-    // 2. 拖曳相關事件 (使用 on... 語法，防止重複疊加監聽器)
-    dropZone.ondragover = (e) => { 
-        e.preventDefault(); 
-        dropZone.classList.add('border-blue-500'); 
-    };
-    
-    dropZone.ondragleave = (e) => { 
-        e.preventDefault(); 
-        dropZone.classList.remove('border-blue-500'); 
-    };
-    
+    // 1. 拖曳
+    dropZone.ondragover = (e) => { e.preventDefault(); dropZone.classList.add('border-blue-500'); };
+    dropZone.ondragleave = (e) => { e.preventDefault(); dropZone.classList.remove('border-blue-500'); };
     dropZone.ondrop = (e) => { 
         e.preventDefault(); 
         dropZone.classList.remove('border-blue-500'); 
         handleFile(e.dataTransfer.files[0]); 
     };
     
-    // 3. 點擊上傳區 -> 觸發 Input
+    // 2. 點擊區塊 -> 觸發 Input
+    // (前提：index.html 必須移除 onclick，否則這裡會觸發第二次)
     dropZone.onclick = (e) => {
-        // 阻止預設行為，直接觸發 input 點擊
-        e.preventDefault();
-        fileInput.click();
+        // 避免點擊到遮罩或 input 自己時重複觸發
+        if (e.target !== fileInput && !e.target.closest('#loading-overlay')) {
+            fileInput.click();
+        }
     };
 
-    // 4. Input 事件 (關鍵！)
-    // 當 input 被程式觸發點擊時，必須阻止事件冒泡回到 dropZone
-    // 否則會形成無窮迴圈：dropZone點擊 -> input點擊 -> 冒泡回dropZone -> dropZone點擊...
-    fileInput.onclick = (e) => {
-        e.stopPropagation();
-    };
+    // 3. Input 阻斷冒泡 (防止回傳給 dropZone)
+    fileInput.onclick = (e) => e.stopPropagation();
     
-    // 檔案變更後處理
+    // 4. 選檔變更
     fileInput.onchange = (e) => {
         if (e.target.files && e.target.files.length > 0) {
             handleFile(e.target.files[0]);
-            // 清空 value，確保下次選同一個檔案也能觸發 change
             fileInput.value = ''; 
         }
     };
 }
 
-// 2. 檔案處理
+// 2. 檔案處理 (改用遮罩，不破壞 DOM)
 function handleFile(file) {
     if (!file) return;
     if (errorMsg) errorMsg.classList.add('hidden');
     
-    // 顯示讀取中狀態
-    if (dropZone) {
-        // 暫存原本內容以便失敗時還原 (簡單做)
-        dropZone.setAttribute('data-original', dropZone.innerHTML);
-        dropZone.innerHTML = `<div class="text-blue-500 font-bold text-xl"><i class="fas fa-spinner fa-spin mr-2"></i>讀取與解析中...</div>`;
-    }
+    // 顯示遮罩
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) overlay.classList.remove('hidden');
 
     const reader = new FileReader();
     reader.onload = async (e) => {
         const success = await processCSV(e.target.result);
-        if (!success && dropZone) {
-             // 失敗還原 UI (這裡簡單重寫 HTML)
-             dropZone.innerHTML = `
-                <div class="bg-white p-10 rounded-xl shadow-lg text-center border-2 border-dashed border-blue-300 hover:border-blue-500 transition-colors cursor-pointer">
-                    <i class="fas fa-cloud-upload-alt text-5xl text-blue-500 mb-4"></i>
-                    <h2 class="text-2xl font-bold text-gray-700 mb-2">拖曳或點擊上傳 CSV</h2>
-                    <p class="text-gray-400">支援 XS 選股匯出格式 (Big5)</p>
-                </div>`;
-             // 重新綁定事件太複雜，建議使用者重新整理，或直接顯示錯誤訊息即可
+        
+        // 如果失敗，隱藏遮罩讓使用者重試；如果成功，UI 會切換到報表
+        if (!success && overlay) {
+             overlay.classList.add('hidden');
         }
     };
-    // 強制 Big5 讀取
     reader.readAsText(file, 'Big5');
 }
 
-// 3. 核心處理
+// 3. 核心處理 (解析 CSV)
 async function processCSV(csvText) {
     const lines = csvText.trim().split(/\r?\n/);
     
-    // A. 定位表頭
     let headerIndex = -1;
     let headers = [];
     
@@ -134,7 +114,6 @@ async function processCSV(csvText) {
 
     if (headerIndex === -1) return showError("❌ 格式錯誤：找不到簽章欄位 (TradeDate#)");
 
-    // B. 防偽驗證
     const sigColIndex = headers.findIndex(h => h.startsWith('TradeDate#'));
     const headerString = headers[sigColIndex];
     
@@ -149,10 +128,8 @@ async function processCSV(csvText) {
     const userInfo = parseXQSignature(headerString);
     if (userInfo.isExpired) return showError(`❌ 權限已於 ${userInfo.date} 到期`);
 
-    // 立即顯示身分
     showUserStatus(userInfo, true);
 
-    // C. 資料轉換
     const stockJson = {
         status: 'ok',
         mode: 'full',
@@ -196,11 +173,7 @@ async function processCSV(csvText) {
         if (id && name) {
             stockJson.names[id] = name;
             const stockObj = {};
-            
-            const parseArr = (idx) => {
-                if (idx === -1 || !row[idx]) return [];
-                return row[idx].split('/').map(v => parseFloat(v) || 0);
-            };
+            const parseArr = (idx) => (idx === -1 || !row[idx]) ? [] : row[idx].split('/').map(v => parseFloat(v) || 0);
 
             stockObj.open = parseArr(keyMap.open);
             stockObj.high = parseArr(keyMap.high);
@@ -217,32 +190,23 @@ async function processCSV(csvText) {
             if (keyMap.volhigh > -1 && row[keyMap.volhigh]) {
                 stockObj.volhigh = row[keyMap.volhigh].split('/'); 
             }
-
             stockJson.data[id] = stockObj;
         }
     }
 
-    // D. 存入 DB
-    try {
-        await saveToDB(stockJson);
-    } catch (dbErr) {
-        console.error("DB Save Error:", dbErr);
-    }
+    try { await saveToDB(stockJson); } catch (e) { console.error(e); }
 
-    // E. 注入並渲染
     injectDataToCore(stockJson);
 
     if (dropZone) dropZone.style.display = 'none';
     if (reportContainer) reportContainer.classList.remove('hidden');
     
-    if (typeof renderReportView === 'function') {
-        renderReportView(); 
-    }
+    if (typeof renderReportView === 'function') renderReportView();
 
     return true;
 }
 
-// 4. 輔助函式：注入資料
+// 4. 輔助函式
 function injectDataToCore(stockJson) {
     if (!window.csvDates) window.csvDates = [];
     if (!window.stockNameMap) window.stockNameMap = {};
@@ -271,9 +235,7 @@ function openDB() {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
         request.onupgradeneeded = (e) => {
             const db = e.target.result;
-            if (!db.objectStoreNames.contains(STORE_NAME)) {
-                db.createObjectStore(STORE_NAME);
-            }
+            if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
         };
         request.onsuccess = (e) => resolve(e.target.result);
         request.onerror = (e) => reject(e.target.error);
@@ -313,11 +275,14 @@ async function clearDB() {
     });
 }
 
-// 6. UI Helper
+// 6. UI Helpers
 function showError(msg) {
     if (errorMsg) {
         errorMsg.textContent = msg;
         errorMsg.classList.remove('hidden');
+        // 隱藏 Loading 遮罩
+        const overlay = document.getElementById('loading-overlay');
+        if (overlay) overlay.classList.add('hidden');
     } else {
         alert(msg);
     }
@@ -371,19 +336,17 @@ window.handleReset = async function() {
 // 7. 防偽
 function parseXQSignature(fullString) {
     const HEADER = "TradeDate#";
-    if (!fullString || !fullString.startsWith(HEADER)) {
-        return { valid: false, message: "格式錯誤" };
-    }
+    if (!fullString || !fullString.startsWith(HEADER)) return { valid: false };
+    
+    // ... (保留原本的解碼邏輯) ...
     const content = fullString.substring(HEADER.length);
     const MAP_DATE = "QwErTyUiOp";
     const MAP_ID   = "abcdefghij";
-
     function decodeDigit(char) {
         const idx = MAP_DATE.indexOf(char);
         return idx > -1 ? idx.toString() : "?";
     }
-
-    if (content.length < 13) return { valid: false, message: "長度不足" };
+    if (content.length < 13) return { valid: false };
 
     const encSig    = content.substring(0, 4);
     const encStatus = content.substring(4, 5); 
@@ -407,9 +370,7 @@ function parseXQSignature(fullString) {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const expDate = new Date(parseInt(yyyy), parseInt(mmdd.substring(0, 2)) - 1, parseInt(mmdd.substring(2)));
-        if (expDate < today) {
-            isExpired = true;
-        }
+        if (expDate < today) isExpired = true;
     }
 
     let rawIDReversed = "";
@@ -435,10 +396,8 @@ function parseXQSignature(fullString) {
 function verifyCSV(headerString, firstDateValue) {
     const info = parseXQSignature(headerString);
     if (!info.valid) return false;
-
     const cleanDateStr = firstDateValue.replace(/\//g, "").replace(/-/g, "");
     const dataDate = parseInt(cleanDateStr, 10);
     const calculatedSig = (dataDate * 3 + 888) % 10000;
-
     return calculatedSig === info.signature;
 }

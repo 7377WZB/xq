@@ -1,206 +1,263 @@
 // ==========================================
-// report-view.js - v8.0 (Single Page Adapter)
+// report-view.js - v9.0 (Controls & Full Cells)
 // ==========================================
 
-function renderReportView() {
-    console.log("Rendering Report View (Matrix Mode)...");
+// 狀態管理 (記住使用者的選擇)
+const g_viewState = {
+    dataType: 'p_rank', // p_rank(價PR), v_rank(量PR), volhigh(量創高)
+    filterLevel: 0,     // 0:全部, 80:強勢(>80), 90:超強(>90)
+    days: 20,           // 顯示天數: 20, 50, 100
+    sort: 'desc'        // desc(新->舊), asc(舊->新)
+};
 
-    // 1. 環境檢查
+function renderReportView() {
+    console.log("Rendering Report View v9.0...");
     const container = document.getElementById('report-container');
     if (!container) return;
 
-    // 2. 參數設定
-    const DISPLAY_LIMIT = 50; // ★ 關鍵：限制顯示數量，防止瀏覽器繪圖崩潰
+    // 1. 準備資料
     const allDates = window.csvDates || [];
-    const displayDates = allDates.slice(0, 50); // 顯示最近 15 天
-
-    // 3. 資料準備與排序
-    const stockIds = Object.keys(window.csvStockData || {});
-    
-    // 排序：依照最新一天 (Index 0) 的 PR (PriceRank) 由高到低
-    stockIds.sort((a, b) => {
-        const prA = getPrValue(a, 0);
-        const prB = getPrValue(b, 0);
-        return prB - prA;
-    });
-
-    // 過濾：只取前 50 檔 (模擬原本的過濾邏輯)
-    const filteredIds = stockIds.slice(0, DISPLAY_LIMIT);
-
-    // 4. 初始化 HTML 結構 (Sticky Table)
-    // 只有當結構不存在時才寫入，避免重複刷新閃爍
-    if (!document.getElementById('matrix-table-root')) {
-        container.innerHTML = `
-            <div id="matrix-table-root" class="bg-white rounded-xl shadow-lg flex flex-col h-screen max-h-[90vh]">
-                <div class="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50 rounded-t-xl">
-                    <div class="flex items-center gap-3">
-                        <h2 class="text-xl font-bold text-gray-800">
-                            <i class="fas fa-th text-blue-600 mr-2"></i>強勢股矩陣 (Top ${DISPLAY_LIMIT})
-                        </h2>
-                        <span class="text-sm text-gray-500 bg-gray-200 px-2 py-1 rounded">
-                            資料日期: ${allDates[0] || '--'}
-                        </span>
-                    </div>
-                    <div class="text-sm text-gray-500">
-                        共 <span class="font-bold text-blue-600">${filteredIds.length}</span> 檔
-                    </div>
-                </div>
-
-                <div class="overflow-auto flex-1">
-                    <table class="min-w-full divide-y divide-gray-200 border-separate" style="border-spacing: 0;">
-                        <thead class="bg-gray-50 sticky top-0 z-20">
-                            <tr>
-                                <th class="sticky left-0 bg-gray-50 px-2 py-3 text-center text-xs font-bold text-gray-500 uppercase border-b border-r border-gray-200 shadow-sm w-12 z-30">
-                                    K線
-                                </th>
-                                <th class="sticky left-12 bg-gray-50 px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase border-b border-r border-gray-200 shadow-sm w-32 z-30">
-                                    商品
-                                </th>
-                                <th class="px-2 py-3 text-center text-xs font-bold text-gray-500 uppercase border-b border-gray-200 w-32">
-                                    近20日走勢
-                                </th>
-                                <th class="px-2 py-3 text-right text-xs font-bold text-gray-500 uppercase border-b border-r border-gray-200 w-20">
-                                    漲幅%
-                                </th>
-                                ${displayDates.map(date => {
-                                    // 格式化日期 20260212 -> 02/12
-                                    const dStr = date.length === 8 ? `${date.substring(4,6)}/${date.substring(6,8)}` : date;
-                                    return `<th class="px-2 py-3 text-center text-xs font-medium text-gray-500 border-b border-gray-100 min-w-[48px]">${dStr}</th>`;
-                                }).join('')}
-                            </tr>
-                        </thead>
-                        <tbody id="stock-table-body" class="bg-white divide-y divide-gray-200">
-                            </tbody>
-                    </table>
-                </div>
-            </div>
-        `;
+    // 根據設定的天數截取日期
+    let displayDates = allDates.slice(0, g_viewState.days);
+    // 處理排序 (新舊反轉)
+    if (g_viewState.sort === 'asc') {
+        displayDates = [...displayDates].reverse();
     }
 
-    // 5. 渲染資料列
-    const tbody = document.getElementById('stock-table-body');
-    let html = "";
+    // 2. 篩選與排序 Stock ID
+    let stockIds = Object.keys(window.csvStockData || {});
+    
+    // 預設依據 PR 排序
+    stockIds.sort((a, b) => {
+        const valA = getLatestValue(a, 'p_rank');
+        const valB = getLatestValue(b, 'p_rank');
+        return valB - valA;
+    });
 
-    filteredIds.forEach(id => {
+    // 執行過濾 (Filter)
+    if (g_viewState.filterLevel > 0) {
+        stockIds = stockIds.filter(id => {
+            const pr = getLatestValue(id, 'p_rank');
+            const vr = getLatestValue(id, 'v_rank');
+            // 只要其中一個滿足條件就留下來
+            return pr >= g_viewState.filterLevel || vr >= g_viewState.filterLevel;
+        });
+    }
+
+    // 效能保護: 最多顯示 100 筆 (避免 SVG 繪圖過多卡頓)
+    // 您可以自行調整此數值
+    const RENDER_LIMIT = 100;
+    const finalIds = stockIds.slice(0, RENDER_LIMIT);
+
+    // 3. 建立 HTML 結構 (含控制面板)
+    // 只有當根容器不存在時才重建，避免閃爍。但如果需要更新 Header (日期變動)，則需更新 thead
+    // 這裡為了簡單，每次都重繪整個容器內容
+    container.innerHTML = `
+        <div class="bg-white rounded-xl shadow-lg flex flex-col h-screen max-h-[90vh] border border-gray-200">
+            
+            <div class="p-3 border-b border-gray-200 bg-gray-50 flex flex-wrap gap-4 items-center justify-between">
+                
+                <div class="flex items-center gap-3">
+                    <div class="font-bold text-gray-700 text-lg flex items-center">
+                        <i class="fas fa-sliders-h text-blue-600 mr-2"></i>籌碼矩陣
+                    </div>
+                    <span class="text-xs font-mono text-gray-500 bg-gray-200 px-2 py-1 rounded">
+                        共 ${finalIds.length} 檔
+                    </span>
+                </div>
+
+                <div class="flex flex-wrap gap-2 items-center">
+                    
+                    <div class="flex bg-white border border-gray-300 rounded overflow-hidden shadow-sm">
+                        ${renderBtn('dataType', 'p_rank', '價 PR')}
+                        ${renderBtn('dataType', 'v_rank', '量 PR')}
+                        ${renderBtn('dataType', 'volhigh', '量創高')}
+                    </div>
+
+                    <div class="flex bg-white border border-gray-300 rounded overflow-hidden shadow-sm ml-2">
+                        ${renderBtn('filterLevel', 0, '全部')}
+                        ${renderBtn('filterLevel', 80, '> 80')}
+                        ${renderBtn('filterLevel', 90, '> 90')}
+                    </div>
+
+                    <div class="flex bg-white border border-gray-300 rounded overflow-hidden shadow-sm ml-2">
+                        ${renderBtn('days', 20, '20日')}
+                        ${renderBtn('days', 50, '50日')}
+                        ${renderBtn('days', 100, '百日')}
+                    </div>
+
+                    <button onclick="updateViewState('sort', '${g_viewState.sort === 'desc' ? 'asc' : 'desc'}')" 
+                            class="ml-2 px-3 py-1 text-sm border border-gray-300 rounded bg-white hover:bg-gray-100 text-gray-600">
+                        <i class="fas fa-sort${g_viewState.sort === 'asc' ? '-numeric-down' : '-numeric-up-alt'} mr-1"></i>
+                        ${g_viewState.sort === 'desc' ? '新→舊' : '舊→新'}
+                    </button>
+                </div>
+            </div>
+
+            <div class="overflow-auto flex-1 bg-white">
+                <table class="min-w-full border-separate" style="border-spacing: 0;">
+                    <thead class="bg-gray-50 sticky top-0 z-20 shadow-sm">
+                        <tr>
+                            <th class="sticky left-0 bg-gray-50 px-2 py-2 text-center text-xs font-bold text-gray-500 uppercase border-b border-r border-gray-200 w-10 z-30">K線</th>
+                            <th class="sticky left-10 bg-gray-50 px-3 py-2 text-left text-xs font-bold text-gray-500 uppercase border-b border-r border-gray-200 w-28 z-30">商品</th>
+                            <th class="px-2 py-2 text-center text-xs font-bold text-gray-500 uppercase border-b border-gray-200 w-24">走勢</th>
+                            <th class="px-2 py-2 text-right text-xs font-bold text-gray-500 uppercase border-b border-r border-gray-200 w-16">漲幅</th>
+                            
+                            ${displayDates.map(date => {
+                                const dStr = date.length === 8 ? `${date.substring(4,6)}/${date.substring(6,8)}` : date;
+                                return `<th class="px-0 py-2 text-center text-xs font-medium text-gray-500 border-b border-gray-100 min-w-[36px] w-[36px] select-none">${dStr}</th>`;
+                            }).join('')}
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-100">
+                        ${renderRows(finalIds, displayDates)}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+// 輔助：生成按鈕 HTML
+function renderBtn(key, value, label) {
+    const isActive = g_viewState[key] === value;
+    const activeClass = "bg-blue-600 text-white font-bold";
+    const normalClass = "bg-white text-gray-600 hover:bg-gray-50";
+    // 轉義字串參數
+    const valStr = typeof value === 'string' ? `'${value}'` : value;
+    return `
+        <button onclick="updateViewState('${key}', ${valStr})" 
+                class="px-3 py-1 text-xs border-r border-gray-200 last:border-r-0 transition-colors ${isActive ? activeClass : normalClass}">
+            ${label}
+        </button>
+    `;
+}
+
+// 輔助：更新狀態並重繪
+window.updateViewState = function(key, value) {
+    g_viewState[key] = value;
+    renderReportView(); // 重繪
+};
+
+// 輔助：生成表格列
+function renderRows(ids, dates) {
+    if (ids.length === 0) return `<tr><td colspan="100" class="p-8 text-center text-gray-400">無符合條件資料</td></tr>`;
+
+    // 為了對應日期，我們需要知道原始日期的 Index
+    // 若 g_viewState.sort === 'asc'，dates 是 [舊...新]，但 window.csvDates 是 [新...舊]
+    // 這邊用 Map 建立 日期字串 -> 原始Index 的對照，比較準確
+    const allDatesMap = {};
+    (window.csvDates || []).forEach((d, i) => allDatesMap[d] = i);
+
+    return ids.map(id => {
         const name = window.stockNameMap[id] || id;
         const fullData = window.fullStockData[id] || {};
         const closeArr = fullData.close || [];
         
-        // --- 漲幅計算 ---
-        let changeText = "--";
-        let changeClass = "text-gray-400";
+        // 漲幅
+        let changeText = "-";
+        let changeClass = "text-gray-300";
         if (closeArr.length >= 2 && closeArr[1] > 0) {
             const val = ((closeArr[0] - closeArr[1]) / closeArr[1]) * 100;
-            changeText = (val > 0 ? "+" : "") + val.toFixed(2) + "%";
+            changeText = (val > 0 ? "+" : "") + val.toFixed(1) + "%";
             changeClass = val > 0 ? "text-red-600 font-bold" : (val < 0 ? "text-green-600 font-bold" : "text-gray-900");
         }
 
-        // --- Sparkline (SVG) ---
-        // 取最近 20 天收盤價，並反轉 (舊->新) 以利繪圖
-        const sparkLimit = 20;
-        const sparkData = closeArr.slice(0, sparkLimit).reverse();
-        // 根據漲跌決定線條顏色
+        // Sparkline
+        const sparkData = closeArr.slice(0, 20).reverse();
         const color = changeClass.includes('red') ? 'red' : (changeClass.includes('green') ? 'green' : 'gray');
         const svg = generateSparkline(sparkData, color);
 
-        // --- Matrix 日期欄位 (PR 值) ---
-        const dateCells = displayDates.map((_, idx) => {
-            const pr = getPrValue(id, idx);
-            // 依照截圖邏輯：PR 高亮顯示
-            let cellClass = "text-gray-300";
-            let bgStyle = "";
+        // 矩陣儲存格生成 (重點修改：Full Cell)
+        const cells = dates.map(dateStr => {
+            const dataIdx = allDatesMap[dateStr];
+            const val = getMatrixValue(id, dataIdx, g_viewState.dataType);
             
-            if (pr >= 95) { 
-                cellClass = "text-white font-bold text-xs"; 
-                bgStyle = "background-color: #8b5cf6;"; // 紫色 (Top tier)
-            } else if (pr >= 90) { 
-                cellClass = "text-white font-bold text-xs"; 
-                bgStyle = "background-color: #ef4444;"; // 紅色 (High)
-            } else if (pr >= 80) { 
-                cellClass = "text-red-600 font-bold text-xs"; 
-                bgStyle = "background-color: #fef2f2;"; // 淺紅
-            } else if (pr > 0) {
-                cellClass = "text-gray-600 text-xs";
-            }
-
+            // 樣式判斷
+            const style = getCellStyle(val, g_viewState.dataType);
+            
+            // ★ 重點：移除 padding (p-0)，用 div 撐滿 (h-8 w-full)
             return `
-                <td class="px-1 py-2 text-center border-b border-gray-50">
-                    <div style="${bgStyle}" class="w-8 h-6 flex items-center justify-center mx-auto rounded ${cellClass}">
-                        ${pr > 0 ? Math.floor(pr) : '-'}
+                <td class="p-0 border-b border-gray-100 border-r border-dashed border-gray-100 h-8">
+                    <div class="w-full h-full flex items-center justify-center text-xs ${style.textClass}" 
+                         style="${style.bgStyle}">
+                        ${style.label}
                     </div>
                 </td>
             `;
         }).join('');
 
-        html += `
+        return `
             <tr class="hover:bg-blue-50 transition-colors group">
-                <td class="sticky left-0 bg-white group-hover:bg-blue-50 px-2 py-2 text-center border-r border-gray-200 z-10">
-                    <button onclick="openKLineChart('${id}')" class="text-blue-500 hover:text-blue-700 transition-transform hover:scale-110">
-                        <i class="fas fa-chart-line text-lg"></i>
+                <td class="sticky left-0 bg-white group-hover:bg-blue-50 p-0 text-center border-b border-r border-gray-200 z-10 w-10">
+                    <button onclick="openKLineChart('${id}')" class="w-full h-full flex items-center justify-center text-blue-400 hover:text-blue-600">
+                        <i class="fas fa-chart-line"></i>
                     </button>
                 </td>
-                
-                <td class="sticky left-12 bg-white group-hover:bg-blue-50 px-4 py-2 text-left border-r border-gray-200 z-10">
-                    <div class="font-bold text-gray-800 text-sm leading-tight">${id}</div>
-                    <div class="text-xs text-gray-500 leading-tight">${name}</div>
+                <td class="sticky left-10 bg-white group-hover:bg-blue-50 px-2 py-1 text-left border-b border-r border-gray-200 z-10 w-28">
+                    <div class="font-bold text-gray-800 text-xs leading-tight">${id}</div>
+                    <div class="text-xs text-gray-500 truncate leading-tight">${name}</div>
                 </td>
-
-                <td class="px-2 py-2 text-center">
-                    ${svg}
-                </td>
-
-                <td class="px-2 py-2 text-right border-r border-gray-200 text-sm font-mono ${changeClass}">
-                    ${changeText}
-                </td>
-
-                ${dateCells}
+                <td class="p-1 text-center border-b border-gray-100">${svg}</td>
+                <td class="px-2 py-1 text-right border-b border-r border-gray-200 text-xs font-mono ${changeClass}">${changeText}</td>
+                ${cells}
             </tr>
         `;
-    });
-
-    if (filteredIds.length === 0) {
-        html = `<tr><td colspan="20" class="p-8 text-center text-gray-500">無符合條件資料</td></tr>`;
-    }
-
-    tbody.innerHTML = html;
+    }).join('');
 }
 
-// === 輔助函式 ===
-
-// 1. 取得 PR 值 (安全存取)
-function getPrValue(id, dateIndex) {
+// 邏輯：取得矩陣數值
+function getMatrixValue(id, idx, type) {
     const data = window.fullStockData[id];
-    if (data && data.p_rank && data.p_rank[dateIndex] !== undefined) {
-        return data.p_rank[dateIndex];
-    }
+    if (!data) return 0;
+    
+    if (type === 'p_rank') return (data.p_rank && data.p_rank[idx]) || 0;
+    if (type === 'v_rank') return (data.v_rank && data.v_rank[idx]) || 0;
+    if (type === 'volhigh') return (data.volhigh && data.volhigh[idx]) || "0";
     return 0;
 }
 
-// 2. 產生 Sparkline SVG (極簡版，不耗效能)
-function generateSparkline(data, color) {
-    if (!data || data.length < 2) return '';
-    const w = 100, h = 25;
-    const min = Math.min(...data);
-    const max = Math.max(...data);
-    const range = max - min || 1;
-    
-    const points = data.map((v, i) => {
-        const x = (i / (data.length - 1)) * w;
-        const y = h - ((v - min) / range) * h;
-        return `${x},${y}`;
-    }).join(' ');
-
-    const stroke = color === 'red' ? '#dc2626' : (color === 'green' ? '#16a34a' : '#9ca3af');
-    // 使用 vector-effect 確保線條清晰
-    return `<svg width="${w}" height="${h}" class="overflow-visible"><polyline fill="none" stroke="${stroke}" stroke-width="1.5" points="${points}" stroke-linecap="round" stroke-linejoin="round" /></svg>`;
+// 邏輯：取得單一數值 (用於排序)
+function getLatestValue(id, type) {
+    return getMatrixValue(id, 0, type);
 }
 
-// 3. 開啟 K 線圖 (橋接函式)
-function openKLineChart(id) {
-    const name = window.stockNameMap[id] || id;
-    if (window.TrendModal && window.TrendModal.open) {
-        window.TrendModal.open(id, name);
-    } else {
-        alert("TrendModal 尚未載入");
+// 樣式：決定格子的顏色與文字
+function getCellStyle(val, type) {
+    // A. 價PR / 量PR
+    if (type === 'p_rank' || type === 'v_rank') {
+        const num = Math.floor(val);
+        if (num === 0) return { label: '-', textClass: 'text-gray-300', bgStyle: '' };
+        
+        if (num >= 95) return { label: num, textClass: 'text-white font-bold', bgStyle: 'background-color: #7c3aed;' }; // 紫
+        if (num >= 90) return { label: num, textClass: 'text-white font-bold', bgStyle: 'background-color: #ef4444;' }; // 紅
+        if (num >= 80) return { label: num, textClass: 'text-red-700 font-bold', bgStyle: 'background-color: #fee2e2;' }; // 淺紅
+        return { label: num, textClass: 'text-gray-500', bgStyle: '' };
     }
+    
+    // B. 量創高 (字串)
+    if (type === 'volhigh') {
+        // 假設 "600"=創百日高, "200"=創60日高 (根據您的業務邏輯)
+        if (val == "0" || !val) return { label: '', textClass: '', bgStyle: '' };
+        return { label: 'H', textClass: 'text-white font-bold', bgStyle: 'background-color: #f59e0b;' }; // 橘色標記
+    }
+
+    return { label: val, textClass: '', bgStyle: '' };
+}
+
+// 輔助：Sparkline
+function generateSparkline(data, color) {
+    if (!data || data.length < 2) return '';
+    const w = 80, h = 20;
+    const min = Math.min(...data), max = Math.max(...data);
+    const range = max - min || 1;
+    const points = data.map((v, i) => `${(i/(data.length-1))*w},${h - ((v-min)/range)*h}`).join(' ');
+    const stroke = color === 'red' ? '#dc2626' : (color === 'green' ? '#16a34a' : '#9ca3af');
+    return `<svg width="${w}" height="${h}" class="mx-auto"><polyline fill="none" stroke="${stroke}" stroke-width="1.5" points="${points}" /></svg>`;
+}
+
+// 互動：開圖
+window.openKLineChart = function(id) {
+    const name = window.stockNameMap[id] || id;
+    if (window.TrendModal) window.TrendModal.open(id, name);
 }

@@ -1,143 +1,218 @@
 /**
- * report-view.js
- * 負責渲染個股列表，並處理 DOM 結構初始化
+ * report-view.js - v3.0 (Matrix View)
+ * 功能：
+ * 1. 顯示 Sparkline (近50日走勢)
+ * 2. 動態生成日期欄位 (顯示歷史 PR)
+ * 3. 修復 Modal 呼叫問題
  */
+
 function renderReportView() {
-    console.log("Start rendering Report View...");
+    console.log("Rendering Matrix Report View...");
 
-    // 1. 初始化 HTML 結構 (如果容器是空的)
+    // 1. 檢查與初始化容器
     const container = document.getElementById('report-container');
-    if (!container) {
-        console.error("找不到 report-container");
-        return;
-    }
+    if (!container) return;
 
-    // 只有當內容不存在時才寫入骨架
-    if (!document.getElementById('stock-table-body')) {
-        container.innerHTML = `
-            <div class="bg-white rounded-xl shadow-lg p-6">
-                <div class="flex justify-between items-center mb-6 border-b border-gray-100 pb-4">
-                    <h2 class="text-2xl font-bold text-gray-800">
-                        <i class="fas fa-list-alt text-blue-600 mr-2"></i>個股列表
+    // 取得所有日期 (從 data-core 全域變數)
+    // 預設限制顯示最近 10~15 天，以免表格過寬 (可自行調整 slice)
+    const allDates = window.csvDates || [];
+    const displayDates = allDates.slice(0, 15); // 只顯示最近 15 天
+
+    // 2. 建立 HTML 結構 (Matrix 佈局)
+    // 注意：我們使用 sticky header 讓日期列固定
+    container.innerHTML = `
+        <div class="bg-white rounded-xl shadow-lg flex flex-col h-screen max-h-[90vh]">
+            <div class="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50 rounded-t-xl">
+                <div class="flex items-center gap-3">
+                    <h2 class="text-xl font-bold text-gray-800">
+                        <i class="fas fa-th text-blue-600 mr-2"></i>籌碼矩陣
                     </h2>
-                    <div class="text-sm text-gray-500">
-                        資料日期：<span id="disp-date" class="font-bold text-blue-600">--</span> 
-                        (共 <span id="disp-count">0</span> 檔)
-                    </div>
+                    <span class="text-sm text-gray-500 bg-gray-200 px-2 py-1 rounded">
+                        資料日期: ${allDates[0] || '--'}
+                    </span>
                 </div>
-
-                <div class="overflow-x-auto">
-                    <table class="min-w-full divide-y divide-gray-200">
-                        <thead class="bg-gray-50">
-                            <tr>
-                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">趨勢</th>
-                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">代碼</th>
-                                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">商品</th>
-                                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">成交</th>
-                                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">漲幅%</th>
-                                <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">總量</th>
-                                <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" title="Price Rank">PR</th>
-                                <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" title="Volume Rank">VR</th>
-                                <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" title="Vol High Status">VH</th>
-                            </tr>
-                        </thead>
-                        <tbody id="stock-table-body" class="bg-white divide-y divide-gray-200">
-                            </tbody>
-                    </table>
+                <div class="text-sm text-gray-500">
+                    共 <span id="disp-count" class="font-bold text-blue-600">0</span> 檔
                 </div>
             </div>
-        `;
-    }
 
-    // 2. 更新日期顯示
-    if (window.csvDates && window.csvDates.length > 0) {
-        document.getElementById('disp-date').textContent = window.csvDates[0];
-    }
+            <div class="overflow-auto flex-1">
+                <table class="min-w-full divide-y divide-gray-200 border-separate" style="border-spacing: 0;">
+                    <thead class="bg-gray-50 sticky top-0 z-10">
+                        <tr>
+                            <th class="sticky left-0 bg-gray-50 px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-r border-gray-200 shadow-sm w-16">
+                                趨勢
+                            </th>
+                            <th class="sticky left-16 bg-gray-50 px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-r border-gray-200 shadow-sm w-40">
+                                股號 / 股名
+                            </th>
+                            <th class="px-4 py-3 text-center text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-gray-200 w-32">
+                                近50日走勢
+                            </th>
+                            <th class="px-4 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider border-b border-r border-gray-200 w-20">
+                                漲幅
+                            </th>
+                            
+                            ${displayDates.map(date => {
+                                // 格式化日期：20260209 -> 02/09
+                                const fmtDate = date.length === 8 ? `${date.substring(4,6)}/${date.substring(6,8)}` : date;
+                                return `<th class="px-2 py-3 text-center text-xs font-medium text-gray-500 border-b border-gray-100 min-w-[60px]">${fmtDate}</th>`;
+                            }).join('')}
+                        </tr>
+                    </thead>
+                    <tbody id="stock-table-body" class="bg-white divide-y divide-gray-200">
+                        </tbody>
+                </table>
+            </div>
+        </div>
+    `;
 
     // 3. 準備資料
-    // 從 script.js 注入的全域變數中讀取
-    const stockIds = Object.keys(window.csvStockData || {}); // 取得所有代碼
+    const stockIds = Object.keys(window.csvStockData || {});
     document.getElementById('disp-count').textContent = stockIds.length;
 
-    if (stockIds.length === 0) {
-        document.getElementById('stock-table-body').innerHTML = `
-            <tr><td colspan="9" class="px-6 py-4 text-center text-gray-400">無資料顯示</td></tr>
-        `;
-        return;
-    }
-
-    // 4. 排序：依照 PR (PriceRank) 由高到低排序
+    // 排序：依照最新一天 (Index 0) 的 PR 由高到低
     stockIds.sort((a, b) => {
-        const prA = window.csvStockData[a] || 0;
-        const prB = window.csvStockData[b] || 0;
-        return prB - prA; // 降冪
+        const prA = getPrValue(a, 0);
+        const prB = getPrValue(b, 0);
+        return prB - prA;
     });
 
-    // 5. 生成表格 HTML
+    // 4. 生成內容
     const tbody = document.getElementById('stock-table-body');
-    let htmlRows = "";
+    let html = "";
 
     stockIds.forEach(id => {
-        // 讀取各項數值 (使用 data-core 定義的全域變數)
         const name = window.stockNameMap[id] || id;
-        const close = window.csvCloseData[id] || 0;
-        const vol = (window.fullStockData[id] && window.fullStockData[id].vol) ? window.fullStockData[id].vol[0] : 0;
-        const pr = window.csvStockData[id] || 0;
-        const vr = window.csvBigOrderData[id] || 0;
-        const vh = window.csvVolHighData[id] || "0"; // 字串 "600", "200" 等
+        const fullData = window.fullStockData[id] || {};
         
-        // 計算漲幅 (需要前一日收盤價)
+        // --- 漲幅計算 ---
+        const closeArr = fullData.close || [];
         let changeText = "--";
-        let changeClass = "text-gray-900";
-        if (window.fullStockData[id] && window.fullStockData[id].close && window.fullStockData[id].close.length >= 2) {
-            const today = window.fullStockData[id].close[0];
-            const yesterday = window.fullStockData[id].close[1];
-            if (yesterday > 0) {
-                const change = ((today - yesterday) / yesterday) * 100;
-                changeText = change.toFixed(2);
-                changeClass = change > 0 ? "text-red-600 font-bold" : (change < 0 ? "text-green-600 font-bold" : "text-gray-900");
-            }
+        let changeClass = "text-gray-400";
+        if (closeArr.length >= 2 && closeArr[1] > 0) {
+            const chg = ((closeArr[0] - closeArr[1]) / closeArr[1]) * 100;
+            changeText = chg.toFixed(1) + "%";
+            changeClass = chg > 0 ? "text-red-600 font-bold" : (chg < 0 ? "text-green-600 font-bold" : "text-gray-900");
         }
 
-        // VH 樣式 (創高亮顯)
-        let vhBadge = `<span class="text-gray-300">-</span>`;
-        if (vh !== "0" && vh !== 0) {
-            vhBadge = `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">${vh}</span>`;
-        }
+        // --- Sparkline (SVG) ---
+        // 取最近 50 天收盤價，並反轉 (舊->新) 以利繪圖
+        const sparkData = closeArr.slice(0, 50).reverse(); 
+        const sparkSvg = generateSparkline(sparkData, changeClass.includes('red') ? 'red' : (changeClass.includes('green') ? 'green' : 'gray'));
 
-        // 組合 Row HTML
-        htmlRows += `
-            <tr class="hover:bg-gray-50 transition-colors">
-                <td class="px-4 py-3 whitespace-nowrap text-center">
-                    <button onclick="handleTrendClick('${id}')" class="text-blue-500 hover:text-blue-700 focus:outline-none transition-transform hover:scale-110" title="查看K線圖">
-                        <i class="fas fa-chart-line text-lg"></i>
+        // --- 歷史 PR 欄位 ---
+        const dateCells = displayDates.map((_, idx) => {
+            const pr = getPrValue(id, idx);
+            // PR 顏色邏輯：>=90 紅底白字, >=80 紅字
+            let prClass = "text-gray-400";
+            let bgClass = "";
+            if (pr >= 95) { prClass = "text-white font-bold"; bgClass = "bg-purple-500 rounded"; }
+            else if (pr >= 90) { prClass = "text-white font-bold"; bgClass = "bg-red-500 rounded"; }
+            else if (pr >= 80) { prClass = "text-red-600 font-bold"; bgClass = "bg-red-50"; }
+            
+            return `
+                <td class="px-2 py-3 whitespace-nowrap text-center text-sm border-b border-gray-50">
+                    <div class="${bgClass} py-1 px-1 min-w-[36px] mx-auto ${prClass}">
+                        ${pr > 0 ? Math.floor(pr) : '-'}
+                    </div>
+                </td>
+            `;
+        }).join('');
+
+        html += `
+            <tr class="hover:bg-blue-50 transition-colors group">
+                <td class="sticky left-0 bg-white group-hover:bg-blue-50 px-4 py-3 text-center border-r border-gray-200">
+                    <button onclick="handleTrendClick('${id}')" class="w-8 h-8 rounded-full bg-blue-100 text-blue-600 hover:bg-blue-600 hover:text-white transition-all flex items-center justify-center shadow-sm">
+                        <i class="fas fa-chart-line"></i>
                     </button>
                 </td>
-                <td class="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">${id}</td>
-                <td class="px-4 py-3 whitespace-nowrap text-sm text-gray-600">${name}</td>
-                <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-mono">${close.toFixed(2)}</td>
-                <td class="px-4 py-3 whitespace-nowrap text-sm text-right font-mono ${changeClass}">${changeText}%</td>
-                <td class="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-500 font-mono">${vol.toLocaleString()}</td>
-                <td class="px-4 py-3 whitespace-nowrap text-center text-sm font-bold text-gray-700">${Math.floor(pr)}</td>
-                <td class="px-4 py-3 whitespace-nowrap text-center text-sm font-bold text-gray-700">${Math.floor(vr)}</td>
-                <td class="px-4 py-3 whitespace-nowrap text-center text-sm">${vhBadge}</td>
+                
+                <td class="sticky left-16 bg-white group-hover:bg-blue-50 px-4 py-3 text-left border-r border-gray-200">
+                    <div class="font-bold text-gray-800">${id}</div>
+                    <div class="text-xs text-gray-500 truncate max-w-[100px]">${name}</div>
+                </td>
+
+                <td class="px-2 py-3 text-center">
+                    ${sparkSvg}
+                </td>
+
+                <td class="px-4 py-3 text-right border-r border-gray-200 text-sm font-mono ${changeClass}">
+                    ${changeText}
+                </td>
+
+                ${dateCells}
             </tr>
         `;
     });
 
-    tbody.innerHTML = htmlRows;
-    console.log(`Rendered ${stockIds.length} rows.`);
+    tbody.innerHTML = html;
 }
 
-// 輔助函式：點擊圖示時，呼叫 trend-modal
+// 輔助：讀取 PR 值 (容錯)
+function getPrValue(id, dateIndex) {
+    // window.fullStockData[id].p_rank 是一個陣列 [今日, 昨日, 前日...]
+    const data = window.fullStockData[id];
+    if (data && data.p_rank && data.p_rank[dateIndex] !== undefined) {
+        return data.p_rank[dateIndex];
+    }
+    return 0;
+}
+
+// 輔助：產生 Sparkline SVG
+function generateSparkline(data, colorType) {
+    if (!data || data.length < 2) return `<span class="text-xs text-gray-300">No Data</span>`;
+    
+    const width = 100;
+    const height = 30;
+    const min = Math.min(...data);
+    const max = Math.max(...data);
+    const range = max - min || 1;
+    
+    // 生成路徑點
+    const points = data.map((val, idx) => {
+        const x = (idx / (data.length - 1)) * width;
+        const y = height - ((val - min) / range) * height; // Y軸反轉 (0在上方)
+        return `${x},${y}`;
+    }).join(' ');
+
+    const strokeColor = colorType === 'red' ? '#ef4444' : (colorType === 'green' ? '#10b981' : '#9ca3af');
+
+    return `
+        <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" class="overflow-visible">
+            <polyline fill="none" stroke="${strokeColor}" stroke-width="1.5" points="${points}" vector-effect="non-scaling-stroke" />
+            <circle cx="${width}" cy="${height - ((data[data.length-1] - min) / range) * height}" r="2" fill="${strokeColor}" />
+        </svg>
+    `;
+}
+
+// 互動：處理點擊 (呼叫 trend-modal)
+// 確保 openTrendModal 是全域可用的
 function handleTrendClick(id) {
-    if (typeof openTrendModal === 'function' && window.fullStockData[id]) {
-        // 補上 symbol 與 name 屬性，確保 Modal 標題正確
+    console.log("Clicked trend for:", id);
+    
+    // 檢查資料
+    if (!window.fullStockData || !window.fullStockData[id]) {
+        alert("錯誤：找不到該股資料");
+        return;
+    }
+
+    // 檢查 Modal 函式
+    if (typeof window.openTrendModal === 'function') {
+        // 補充必要的顯示欄位 (因為 trend-modal 可能依賴這些)
+        const item = window.fullStockData[id];
+        item.symbol = id;
+        item.name = window.stockNameMap[id];
+        
+        window.openTrendModal(item);
+    } else if (typeof openTrendModal === 'function') {
+        // 嘗試直接呼叫
         const item = window.fullStockData[id];
         item.symbol = id;
         item.name = window.stockNameMap[id];
         openTrendModal(item);
     } else {
-        console.error("無法開啟趨勢圖: openTrendModal 未定義 或 無資料", id);
+        console.error("openTrendModal is NOT defined.");
+        alert("錯誤：趨勢圖模組未正確載入 (openTrendModal)");
     }
 }

@@ -77,7 +77,7 @@
         // 1. 取得 Header (第一欄)
         // CSV 可能有 BOM (\ufeff)，需過濾
         const headers = lines[0].split(',');
-        let firstHeader = headers[0].trim();
+        let firstHeader = headers[0].trim().replace(/"/g, '');
         if (firstHeader.charCodeAt(0) === 0xFEFF) {
             firstHeader = firstHeader.substr(1);
         }
@@ -201,76 +201,76 @@
 /**
  * 1. 解析 XS 混淆字串 (核心函式)
  */
-function parseXQSignature(fullString) {
-    const HEADER = "TradeDate#";
-    
-    // 基礎檢核
-    if (!fullString || !fullString.startsWith(HEADER)) {
-        return { valid: false, message: "格式錯誤" };
-    }
-
-    const content = fullString.substring(HEADER.length);
-    const MAP_DATE = "QwErTyUiOp";   // 0-9
-    const MAP_ID   = "abcdefghij";   // 0-9
-
-    function decodeDigit(char) {
-        const idx = MAP_DATE.indexOf(char);
-        return idx > -1 ? idx.toString() : "?";
-    }
-
-    if (content.length < 13) return { valid: false, message: "長度不足" };
-
-    const encSig    = content.substring(0, 4);
-    const encStatus = content.substring(4, 5); 
-    const encMMDD   = content.substring(5, 9); 
-    const encYYYY   = content.substring(content.length - 4); 
-    const encID     = content.substring(9, content.length - 4); 
-
-    // --- A. 還原防偽簽章 (這是新增的修改) ---
-    let sigStr = "";
-    for (let c of encSig) sigStr += decodeDigit(c);
-    const signature = parseInt(sigStr, 10); // 轉成數字，例如 1521
-
-    // --- B. 還原日期 (期限) ---
-    let yyyy = ""; for (let c of encYYYY) yyyy += decodeDigit(c);
-    let mmdd = ""; for (let c of encMMDD) mmdd += decodeDigit(c);
-    const fullDate = yyyy + mmdd;
-    const isPermanent = (fullDate === "13572468");
-
-    // --- C. 還原狀態 & 過期判斷 ---
-    const status = decodeDigit(encStatus);
-    let isExpired = false;
-    
-    if (!isPermanent) {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        // JS 月份從 0 開始
-        const expDate = new Date(parseInt(yyyy), parseInt(mmdd.substring(0, 2)) - 1, parseInt(mmdd.substring(2)));
-        if (expDate < today) {
-            isExpired = true;
+    function parseXQSignature(fullString) {
+        const HEADER = "TradeDate#";
+        
+        // 基礎檢核
+        if (!fullString || !fullString.startsWith(HEADER)) {
+            return { valid: false, message: "格式錯誤" };
         }
-    }
 
-    // --- D. 還原 ID ---
-    let rawIDReversed = "";
-    for (let c of encID) {
-        const idx = MAP_ID.indexOf(c);
-        if (idx > -1) rawIDReversed += idx.toString();
-        else rawIDReversed += c;
-    }
-    const finalID = rawIDReversed.split("").reverse().join("");
+        const content = fullString.substring(HEADER.length);
+        const MAP_DATE = "QwErTyUiOp";   // 0-9
+        const MAP_ID   = "abcdefghij";   // 0-9
 
-    return {
-        valid: true,
-        signature: signature, // 回傳解碼後的簽章 (例如 1521)
-        userID: finalID,
-        date: isPermanent ? "無期限" : `${yyyy}/${mmdd.substring(0,2)}/${mmdd.substring(2)}`,
-        status: status, 
-        statusText: (status === "1") ? "綁定戶" : "VIP",
-        isExpired: isExpired,
-        rawDate: fullDate
-    };
-}
+        function decodeDigit(char) {
+            const idx = MAP_DATE.indexOf(char);
+            return idx > -1 ? idx.toString() : "?";
+        }
+
+        if (content.length < 13) return { valid: false, message: "長度不足" };
+
+        const encSig    = content.substring(0, 4);
+        const encStatus = content.substring(4, 5); 
+        const encMMDD   = content.substring(5, 9); 
+        const encYYYY   = content.substring(content.length - 4); 
+        const encID     = content.substring(9, content.length - 4); 
+
+        // --- A. 還原防偽簽章 (這是新增的修改) ---
+        let sigStr = "";
+        for (let c of encSig) sigStr += decodeDigit(c);
+        const signature = parseInt(sigStr, 10); // 轉成數字，例如 1521
+
+        // --- B. 還原日期 (期限) ---
+        let yyyy = ""; for (let c of encYYYY) yyyy += decodeDigit(c);
+        let mmdd = ""; for (let c of encMMDD) mmdd += decodeDigit(c);
+        const fullDate = yyyy + mmdd;
+        const isPermanent = (fullDate === "13572468");
+
+        // --- C. 還原狀態 & 過期判斷 ---
+        const status = decodeDigit(encStatus);
+        let isExpired = false;
+        
+        if (!isPermanent) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            // JS 月份從 0 開始
+            const expDate = new Date(parseInt(yyyy), parseInt(mmdd.substring(0, 2)) - 1, parseInt(mmdd.substring(2)));
+            if (expDate < today) {
+                isExpired = true;
+            }
+        }
+
+        // --- D. 還原 ID ---
+        let rawIDReversed = "";
+        for (let c of encID) {
+            const idx = MAP_ID.indexOf(c);
+            if (idx > -1) rawIDReversed += idx.toString();
+            else rawIDReversed += c;
+        }
+        const finalID = rawIDReversed.split("").reverse().join("");
+
+        return {
+            valid: true,
+            signature: signature, // 回傳解碼後的簽章 (例如 1521)
+            userID: finalID,
+            date: isPermanent ? "無期限" : `${yyyy}/${mmdd.substring(0,2)}/${mmdd.substring(2)}`,
+            status: status, 
+            statusText: (status === "1") ? "綁定戶" : "VIP",
+            isExpired: isExpired,
+            rawDate: fullDate
+        };
+    }
 
 /**
  * 2. 驗證 CSV 是否偽造 (這是第二步的實作)

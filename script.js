@@ -45,9 +45,18 @@ if (dropZone) {
     dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-blue-500'); });
     dropZone.addEventListener('dragleave', (e) => { e.preventDefault(); dropZone.classList.remove('border-blue-500'); });
     dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('border-blue-500'); handleFile(e.dataTransfer.files[0]); });
+    
+    // 點擊區域時觸發檔案選擇
     dropZone.onclick = () => fileInput.click();
 }
-if (fileInput) fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+if (fileInput) {
+    // ★ 關鍵修正：阻止 input 的點擊事件冒泡傳回 dropZone，防止視窗跳出兩次
+    fileInput.addEventListener('click', (e) => e.stopPropagation());
+    
+    // 檔案變更監聽
+    fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+}
 
 // 2. 檔案處理
 function handleFile(file) {

@@ -1,5 +1,5 @@
 // ==========================================
-// script.js - CSV Loader & Adapter
+// script.js - v2.0 (Full Code)
 // ==========================================
 
 // 1. 介面控制
@@ -24,11 +24,11 @@ function handleFile(file) {
     
     const reader = new FileReader();
     reader.onload = (e) => processCSV(e.target.result);
-    // ★ 強制 Big5 讀取 (符合 data_loader.php 的處理邏輯)
+    // 強制 Big5 讀取 (符合 XQ 格式)
     reader.readAsText(file, 'Big5');
 }
 
-// 3. 核心處理 (模擬 data_loader.php)
+// 3. 核心處理
 function processCSV(csvText) {
     const lines = csvText.trim().split(/\r?\n/);
     
@@ -46,7 +46,7 @@ function processCSV(csvText) {
 
     if (headerIndex === -1) return showError("❌ 格式錯誤：找不到簽章欄位 (TradeDate#)");
 
-    // B. 防偽驗證 (保留之前的邏輯)
+    // B. 防偽驗證
     const sigColIndex = headers.findIndex(h => h.startsWith('TradeDate#'));
     const headerString = headers[sigColIndex];
     
@@ -65,7 +65,6 @@ function processCSV(csvText) {
     showUserStatus(userInfo);
 
     // C. 資料轉換 (模擬 PHP 輸出的 JSON 結構)
-    // 這是對接 data-core.js 的關鍵
     const stockJson = {
         status: 'ok',
         mode: 'full',
@@ -74,31 +73,40 @@ function processCSV(csvText) {
         data: {}
     };
 
-    // Mapping (參照 data_loader.php $keys)
+    // 動態欄位對應 (Mapping)
+    const col = (name) => headers.findIndex(h => h === name || h === name.replace(/"/g, ''));
+    
+    // 根據 data_loader.php 的 $keys 設定
     const keyMap = {
-        'id': 1,       // 代碼 (Index 1)
-        'name': 2,     // 商品 (Index 2)
-        'date': sigColIndex, // TradeDate
-        'open': headers.findIndex(h => h === 'Open'),
-        'high': headers.findIndex(h => h === 'High'),
-        'low': headers.findIndex(h => h === 'Low'),
-        'close': headers.findIndex(h => h === 'Close'),
-        'vol': headers.findIndex(h => h === 'Volume'),
-        'p_rank': headers.findIndex(h => h === 'PriceRank'), // 對應 $keys['p_rank']
-        'v_rank': headers.findIndex(h => h === 'VolRank'),   // 對應 $keys['v_rank']
-        'sma20': headers.findIndex(h => h === 'Sma20'),
-        'sma50': headers.findIndex(h => h === 'Sma50'),
-        'sma150': headers.findIndex(h => h === 'Sma150'),
-        'sma200': headers.findIndex(h => h === 'Sma200'),
-        'volhigh': headers.findIndex(h => h === 'VolHigh')
+        'id': col('代碼'),
+        'name': col('商品'),
+        'date': sigColIndex,
+        'open': col('Open'),
+        'high': col('High'),
+        'low': col('Low'),
+        'close': col('Close'),
+        'vol': col('Volume'),
+        'p_rank': col('PriceRank'),
+        'v_rank': col('VolRank'),
+        'sma20': col('Sma20'),
+        'sma50': col('Sma50'),
+        'sma150': col('Sma150'),
+        'sma200': col('Sma200'),
+        'volhigh': col('VolHigh')
     };
 
     for (let i = headerIndex + 1; i < lines.length; i++) {
         const row = lines[i].split(',').map(c => c.trim().replace(/"/g, ''));
         if (row.length < 5) continue;
 
-        const id = row[keyMap.id].replace('.TW', '');
-        const name = row[keyMap.name];
+        // 確保欄位存在才讀取
+        const idIdx = keyMap.id;
+        const nameIdx = keyMap.name;
+        
+        if (idIdx === -1 || nameIdx === -1) continue;
+
+        const id = row[idIdx].replace('.TW', '');
+        const name = row[nameIdx];
 
         if (id && name) {
             stockJson.names[id] = name;
@@ -124,7 +132,7 @@ function processCSV(csvText) {
             stockObj.sma50 = parseArr(keyMap.sma50);
             stockObj.sma150 = parseArr(keyMap.sma150);
             stockObj.sma200 = parseArr(keyMap.sma200);
-            // volhigh 是字串陣列 (例如 "600"/"0")
+            
             if (keyMap.volhigh > -1 && row[keyMap.volhigh]) {
                 stockObj.volhigh = row[keyMap.volhigh].split('/'); 
             }
@@ -134,35 +142,34 @@ function processCSV(csvText) {
     }
 
     // D. 注入 data-core.js
-    // 我們手動觸發 data-core 的邏輯，而不是透過 API.getStockDataJSON
-    if (window.loadFromLocalCSV) {
-        window.loadFromLocalCSV(stockJson);
-    } else {
-        // 如果 data-core.js 還沒改，我們直接操作全域變數 (Fallback)
-        injectDataToCore(stockJson);
-    }
+    injectDataToCore(stockJson);
 
-    // E. 切換畫面
+    // E. 切換畫面與呼叫渲染
     if (dropZone) dropZone.style.display = 'none';
     if (reportContainer) reportContainer.classList.remove('hidden');
     
-    // 呼叫渲染
+    // ★ 關鍵：呼叫 report-view.js 的主函式
     if (typeof renderReportView === 'function') {
-        // report-view 可能需要知道有哪些 ID
-        // 這裡假設 renderReportView 會自己去讀 window.csvStockData
+        console.log("Calling renderReportView...");
         renderReportView(); 
+    } else {
+        console.error("renderReportView is not defined. Please check report-view.js");
+        alert("錯誤：找不到列表渲染函式 (renderReportView)。請確認 report-view.js 是否已正確封裝。");
     }
 }
 
-// 4. 輔助函式：注入資料到 data-core (模擬 loadAllCsvData 的後半段)
+// 4. 輔助函式：注入資料到 data-core
 function injectDataToCore(stockJson) {
+    if (!window.csvDates) window.csvDates = [];
+    if (!window.stockNameMap) window.stockNameMap = {};
+    if (!window.fullStockData) window.fullStockData = {};
+    if (!window.csvStockData) window.csvStockData = {};
+    if (!window.csvBigOrderData) window.csvBigOrderData = {};
+    if (!window.csvCloseData) window.csvCloseData = {};
+    if (!window.csvVolHighData) window.csvVolHighData = {};
+
     window.csvDates = stockJson.dates;
     window.stockNameMap = stockJson.names;
-    window.fullStockData = {};
-    window.csvStockData = {};
-    window.csvBigOrderData = {};
-    window.csvCloseData = {};
-    window.csvVolHighData = {};
 
     const data = stockJson.data;
     for (let id in data) {
@@ -212,98 +219,77 @@ function showUserStatus(info) {
     `;
 }
 
-function verifyCSV(headerString, firstDateValue) {
-    // 1. 先解析表頭
-    const info = parseXQSignature(headerString);
+// 6. 防偽函式 (verifyCSV, parseXQSignature)
+function parseXQSignature(fullString) {
+    const HEADER = "TradeDate#";
+    if (!fullString || !fullString.startsWith(HEADER)) {
+        return { valid: false, message: "格式錯誤" };
+    }
+    const content = fullString.substring(HEADER.length);
+    const MAP_DATE = "QwErTyUiOp";
+    const MAP_ID   = "abcdefghij";
+
+    function decodeDigit(char) {
+        const idx = MAP_DATE.indexOf(char);
+        return idx > -1 ? idx.toString() : "?";
+    }
+
+    if (content.length < 13) return { valid: false, message: "長度不足" };
+
+    const encSig    = content.substring(0, 4);
+    const encStatus = content.substring(4, 5); 
+    const encMMDD   = content.substring(5, 9); 
+    const encYYYY   = content.substring(content.length - 4); 
+    const encID     = content.substring(9, content.length - 4); 
+
+    let sigStr = "";
+    for (let c of encSig) sigStr += decodeDigit(c);
+    const signature = parseInt(sigStr, 10);
+
+    let yyyy = ""; for (let c of encYYYY) yyyy += decodeDigit(c);
+    let mmdd = ""; for (let c of encMMDD) mmdd += decodeDigit(c);
+    const fullDate = yyyy + mmdd;
+    const isPermanent = (fullDate === "13572468");
+
+    const status = decodeDigit(encStatus);
+    let isExpired = false;
     
-    if (!info.valid) {
-        console.error("表頭解析失敗:", info.message);
-        return false;
+    if (!isPermanent) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const expDate = new Date(parseInt(yyyy), parseInt(mmdd.substring(0, 2)) - 1, parseInt(mmdd.substring(2)));
+        if (expDate < today) {
+            isExpired = true;
+        }
     }
-    // 2. 取得 CSV 內的資料日期 (需轉為純數字)
-    // 假設傳入的是 "20260212" 或 "2026/02/12"
-    const cleanDateStr = firstDateValue.replace(/\//g, "").replace(/-/g, "");
-    const dataDate = parseInt(cleanDateStr, 10);
-    // 3. 執行防偽公式 (必須與 XS 一模一樣)
-    // 公式: (日期 * 3 + 888) % 10000
-    const calculatedSig = (dataDate * 3 + 888) % 10000;
-    // 4. 比對
-    if (calculatedSig !== info.signature) {
-        console.warn(`防偽警告: 計算值(${calculatedSig}) 與 簽章值(${info.signature}) 不符！`);
-        alert("警告：此檔案可能已經過期或是被篡改！(簽章驗證失敗)");
-        return false; // 驗證失敗
+
+    let rawIDReversed = "";
+    for (let c of encID) {
+        const idx = MAP_ID.indexOf(c);
+        if (idx > -1) rawIDReversed += idx.toString();
+        else rawIDReversed += c;
     }
-    console.log("✅ 防偽驗證通過！");
-    return true; // 驗證成功
+    const finalID = rawIDReversed.split("").reverse().join("");
+
+    return {
+        valid: true,
+        signature: signature,
+        userID: finalID,
+        date: isPermanent ? "無期限" : `${yyyy}/${mmdd.substring(0,2)}/${mmdd.substring(2)}`,
+        status: status, 
+        statusText: (status === "1") ? "綁定戶" : "VIP",
+        isExpired: isExpired,
+        rawDate: fullDate
+    };
 }
 
-function parseXQSignature(fullString) {
-        const HEADER = "TradeDate#";
-        
-        // 基礎檢核
-        if (!fullString || !fullString.startsWith(HEADER)) {
-            return { valid: false, message: "格式錯誤" };
-        }
+function verifyCSV(headerString, firstDateValue) {
+    const info = parseXQSignature(headerString);
+    if (!info.valid) return false;
 
-        const content = fullString.substring(HEADER.length);
-        const MAP_DATE = "QwErTyUiOp";   // 0-9
-        const MAP_ID   = "abcdefghij";   // 0-9
+    const cleanDateStr = firstDateValue.replace(/\//g, "").replace(/-/g, "");
+    const dataDate = parseInt(cleanDateStr, 10);
+    const calculatedSig = (dataDate * 3 + 888) % 10000;
 
-        function decodeDigit(char) {
-            const idx = MAP_DATE.indexOf(char);
-            return idx > -1 ? idx.toString() : "?";
-        }
-
-        if (content.length < 13) return { valid: false, message: "長度不足" };
-
-        const encSig    = content.substring(0, 4);
-        const encStatus = content.substring(4, 5); 
-        const encMMDD   = content.substring(5, 9); 
-        const encYYYY   = content.substring(content.length - 4); 
-        const encID     = content.substring(9, content.length - 4); 
-
-        // --- A. 還原防偽簽章 (這是新增的修改) ---
-        let sigStr = "";
-        for (let c of encSig) sigStr += decodeDigit(c);
-        const signature = parseInt(sigStr, 10); // 轉成數字，例如 1521
-
-        // --- B. 還原日期 (期限) ---
-        let yyyy = ""; for (let c of encYYYY) yyyy += decodeDigit(c);
-        let mmdd = ""; for (let c of encMMDD) mmdd += decodeDigit(c);
-        const fullDate = yyyy + mmdd;
-        const isPermanent = (fullDate === "13572468");
-
-        // --- C. 還原狀態 & 過期判斷 ---
-        const status = decodeDigit(encStatus);
-        let isExpired = false;
-        
-        if (!isPermanent) {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            // JS 月份從 0 開始
-            const expDate = new Date(parseInt(yyyy), parseInt(mmdd.substring(0, 2)) - 1, parseInt(mmdd.substring(2)));
-            if (expDate < today) {
-                isExpired = true;
-            }
-        }
-
-        // --- D. 還原 ID ---
-        let rawIDReversed = "";
-        for (let c of encID) {
-            const idx = MAP_ID.indexOf(c);
-            if (idx > -1) rawIDReversed += idx.toString();
-            else rawIDReversed += c;
-        }
-        const finalID = rawIDReversed.split("").reverse().join("");
-
-        return {
-            valid: true,
-            signature: signature, // 回傳解碼後的簽章 (例如 1521)
-            userID: finalID,
-            date: isPermanent ? "無期限" : `${yyyy}/${mmdd.substring(0,2)}/${mmdd.substring(2)}`,
-            status: status, 
-            statusText: (status === "1") ? "綁定戶" : "VIP",
-            isExpired: isExpired,
-            rawDate: fullDate
-        };
+    return calculatedSig === info.signature;
 }

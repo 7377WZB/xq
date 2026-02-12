@@ -1,5 +1,65 @@
 function renderReportView() {
+    // ★ 新增：初始化 HTML 結構 (如果不存在的話)
+    const container = document.getElementById('report-container');
+    if (!document.getElementById('report-view-content')) {
+        container.innerHTML = `
+            <div id="report-view-content" class="bg-white rounded-xl shadow-lg p-6">
+                <div class="flex space-x-4 mb-6 border-b border-gray-200">
+                    <button id="tab-group" class="px-4 py-2 text-blue-600 border-b-2 border-blue-600 font-bold focus:outline-none">
+                        <i class="fas fa-layer-group mr-2"></i>強勢族群
+                    </button>
+                    <button id="tab-stock" class="px-4 py-2 text-gray-500 hover:text-blue-600 focus:outline-none">
+                        <i class="fas fa-list mr-2"></i>個股列表
+                    </button>
+                </div>
+
+                <div class="flex justify-between items-center mb-4">
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-3">
+                            <i class="fas fa-search text-gray-400"></i>
+                        </span>
+                        <input type="text" id="stock-search" placeholder="搜尋代碼或名稱..." 
+                               class="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none">
+                    </div>
+                    <div class="text-sm text-gray-500">
+                        資料日期: <span id="data-date-display" class="font-bold">--</span>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">代碼</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">商品</th>
+                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">成交</th>
+                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">漲幅</th>
+                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">總量</th>
+                                <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">PR</th>
+                                <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">VR</th>
+                                <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">VH</th>
+                                <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">趨勢</th>
+                            </tr>
+                        </thead>
+                        <tbody id="stock-table-body" class="bg-white divide-y divide-gray-200">
+                            </tbody>
+                    </table>
+                </div>
+                
+                <div id="pagination" class="mt-4 flex justify-center space-x-2"></div>
+            </div>
+        `;
         
+        // 綁定 Tab 切換事件 (簡易版)
+        document.getElementById('tab-group').onclick = () => alert("族群功能尚未實作");
+        document.getElementById('tab-stock').onclick = () => console.log("切換至個股");
+    }
+
+    // 更新日期顯示
+    if (window.csvDates && window.csvDates.length > 0) {
+        document.getElementById('data-date-display').textContent = window.csvDates[0];
+    }
+    
     const FREEZE_STATUS_COL = true;
     let DISPLAY_LIMIT = 20;
     const LINK_ICON = '<span style="font-size: 12px; padding: 0 2px; border: 1px gray solid; cursor: pointer;">↗</span>'; 

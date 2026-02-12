@@ -3,349 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🧪 XQ CSV 實驗室</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #f4f7f6; display: flex; flex-direction: column; align-items: center; padding: 20px; }
-        .container { width: 95%; max-width: 1200px; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #eee; padding-bottom: 15px; }
-        .brand { font-size: 24px; font-weight: bold; color: #2c3e50; }
-        #user-greeting { text-align: right; display: none; }
-        .uid-text { font-weight: 900; font-size: 1.1em; color: #2c3e50; display: block; }
-        .badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 0.85em; margin-top: 4px; }
-        .badge-vip { background: #fff8e1; color: #f57f17; border: 1px solid #ffecb3; }
-        .badge-partner { background: #e3f2fd; color: #1565c0; border: 1px solid #bbdefb; }
-        #drop-zone { border: 3px dashed #cbd5e0; border-radius: 10px; padding: 50px; text-align: center; color: #718096; cursor: pointer; margin-bottom: 20px; transition: 0.3s; }
-        #drop-zone:hover { border-color: #4299e1; background: #ebf8ff; }
-        #chart-area { display: none; }
-        .chart-container { position: relative; height: 500px; width: 100%; }
-        #status-msg { color: #e53e3e; margin-top: 10px; display: none; font-weight: bold; }
-    </style>
+    <title>Stock Analysis Report</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.4.2/echarts.min.css"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.4.2/echarts.min.js"></script>
 </head>
-<body>
+<body class="bg-gray-50 min-h-screen font-sans">
 
-<div class="container">
-    <div class="header">
-        <div class="brand">🧪XQ CSV 實驗室</div>
-        <div id="user-greeting"></div>
-    </div>
+    <div id="user-status" class="fixed top-4 right-4 z-50"></div>
 
-    <div id="drop-zone">
-        <h3>📂 請將 XQ 選股 CSV 拖曳至此</h3>
-        <p>支援欄位順序：代碼, 名稱, PR值, VR值</p>
-        <input type="file" id="fileInput" accept=".csv" style="display:none">
-        <div id="status-msg"></div>
-    </div>
-
-    <div id="chart-area">
-        <h2 id="report-title">📊 選股分析報表</h2>
-        <div class="chart-container">
-            <canvas id="stockChart"></canvas>
+    <div id="drop-zone" class="flex flex-col items-center justify-center min-h-screen">
+        <div class="bg-white p-10 rounded-xl shadow-lg text-center border-2 border-dashed border-blue-300 hover:border-blue-500 transition-colors cursor-pointer" 
+             onclick="document.getElementById('fileInput').click()">
+            <i class="fas fa-cloud-upload-alt text-5xl text-blue-500 mb-4"></i>
+            <h2 class="text-2xl font-bold text-gray-700 mb-2">拖曳或點擊上傳 CSV</h2>
+            <p class="text-gray-400">支援 XS 選股匯出格式 (Big5)</p>
+            <input type="file" id="fileInput" class="hidden" accept=".csv">
         </div>
-        <p style="text-align:center; color:#888; margin-top:10px;">(資料來源：您的 XQ 選股結果)</p>
+        <div id="error-msg" class="mt-4 text-red-500 font-bold hidden"></div>
     </div>
-</div>
 
-<script>
-    // ★ 設定區 ★
-    const LOG_API_URL = "https://script.google.com/macros/s/AKfycbx8Kzqyt4F2_b-6t3zz0LEA6xaoDsX5kKiNbTK3uHpR675B1dNWtTPw9r3ReqppNJft/exec"; 
-    
-    // 全域變數
-    let myChart = null;
+    <div id="report-container" class="container mx-auto px-4 py-8 hidden"></div>
 
-    const dropZone = document.getElementById('drop-zone');
-    const fileInput = document.getElementById('fileInput');
-    const statusMsg = document.getElementById('status-msg');
+    <div id="trend-modal" class="fixed inset-0 z-[9999] hidden" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onclick="closeTrendModal()"></div>
+        <div class="fixed inset-0 z-10 overflow-y-auto">
+            <div class="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
+                <div class="relative transform overflow-hidden rounded-lg bg-white text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-5xl">
+                    <div id="modal-content" class="bg-white px-4 pb-4 pt-5 sm:p-6 sm:pb-4"></div>
+                </div>
+            </div>
+        </div>
+    </div>
 
-    dropZone.addEventListener('click', () => fileInput.click());
-    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
-    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-    dropZone.addEventListener('drop', (e) => { e.preventDefault(); if(e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]); });
-    fileInput.addEventListener('change', (e) => { if(e.target.files.length) handleFile(e.target.files[0]); });
+    <script src="data-core.js"></script>     
+    <script src="trend-modal.js"></script>   
+    <script src="report-view.js"></script>   
+    <script src="script.js"></script>
 
-    function handleFile(file) {
-        statusMsg.style.display = 'none';
-        const reader = new FileReader();
-        reader.onload = (e) => parseAndValidate(e.target.result);
-        // ★ 強制指定 Big5 編碼 (解決中文亂碼與定位偏移)
-        reader.readAsText(file, 'Big5');
-    }
-
-    function parseAndValidate(csvText) {
-        // 1. 切割行 (處理各種換行符號)
-        const lines = csvText.trim().split(/\r?\n/);
-        
-        // 2. ★ 關鍵修正：動態尋找表頭所在的行數
-        // 我們不假設它在第幾行，而是直接找哪一行有 "TradeDate#"
-        let headerRowIndex = -1;
-        let headers = [];
-
-        for (let i = 0; i < lines.length; i++) {
-            // 簡單判斷：該行包含 "TradeDate#" 且有 "代碼" 或 "商品"
-            if (lines[i].includes('TradeDate#')) {
-                headerRowIndex = i;
-                // 切割並去除引號
-                headers = lines[i].split(',').map(h => h.trim().replace(/"/g, ''));
-                break;
-            }
-        }
-
-        if (headerRowIndex === -1) {
-            return showError("❌ 格式錯誤：找不到 'TradeDate#' 簽章欄位，請確認這是正確的 XQ 匯出檔。");
-        }
-
-        // 3. 抓出加密簽章字串 (Column Name)
-        // 尋找 headers 陣列中，開頭是 TradeDate# 的那個欄位
-        const sigColIndex = headers.findIndex(h => h.startsWith('TradeDate#'));
-        if (sigColIndex === -1) return showError("❌ 簽章欄位定位失敗");
-
-        const headerString = headers[sigColIndex]; // 例如: "TradeDate#wyEwEQQpQOKCOTSEQEU"
-
-        // 4. 抓出資料列 (表頭的下一行)
-        if (lines.length <= headerRowIndex + 1) return showError("❌ 檔案中沒有資料");
-        
-        const firstDataRowRaw = lines[headerRowIndex + 1];
-        const firstDataRow = firstDataRowRaw.split(',');
-        
-        // 取得該欄位的日期值 (例如: "20260211/20260210/...")
-        // 記得去除引號
-        let rawDateValue = firstDataRow[sigColIndex].trim().replace(/"/g, '');
-        
-        // ★ 關鍵修正：XQ 資料是 "20260211/20260210..."，我們只取第一個 (最新日期)
-        if (rawDateValue.includes('/')) {
-            rawDateValue = rawDateValue.split('/')[0];
-        }
-
-        // 5. 執行防偽驗證
-        const isSafe = verifyCSV(headerString, rawDateValue);
-
-        if (!isSafe) {
-            sendLog("Unknown", "0", "InvalidSignature");
-            return showError("❌ 驗證失敗：防偽簽章不符或檔案遭篡改");
-        }
-
-        // 6. 驗證通過，解析並顯示 User 資訊
-        const userInfo = parseXQSignature(headerString);
-        if (userInfo.isExpired) {
-            sendLog(userInfo.userID, userInfo.status, "Expired");
-            return showError(`❌ 您的權限已於 ${userInfo.date} 到期`);
-        }
-
-        showGreeting(userInfo.userID, userInfo.status, userInfo.rawDate);
-        sendLog(userInfo.userID, userInfo.status, "Valid");
-
-        // 7. 開始繪圖 (從資料列開始讀取)
-        // 動態搜尋欄位索引
-        const nameIdx = headers.findIndex(h => h.includes('商品') || h.includes('名稱'));
-        const prIdx = headers.findIndex(h => h.toUpperCase().includes('PR') || h.toUpperCase().includes('PRICE')); 
-        const vrIdx = headers.findIndex(h => h.toUpperCase().includes('VR') || h.toUpperCase().includes('VOLRANK'));
-
-        if (nameIdx === -1 || prIdx === -1 || vrIdx === -1) {
-            alert("⚠️ 提醒：找不到 '商品'、'PR' 或 'VR' 欄位，將嘗試使用預設位置繪圖。");
-        }
-
-        const chartData = { names: [], prs: [], vrs: [] };
-
-        // 從 headerRowIndex + 1 開始跑回圈 (即資料區)
-        for (let i = headerRowIndex + 1; i < lines.length; i++) {
-            // 跳過空行
-            if (!lines[i].trim()) continue;
-
-            const row = lines[i].split(',');
-            // 確保欄位足夠
-            if (row.length < sigColIndex) continue;
-
-            // 取值並去引號
-            const getName = (idx, fallback) => idx > -1 && row[idx] ? row[idx].replace(/"/g, '').trim() : row[fallback];
-            const getNum = (idx, fallback) => {
-                let val = idx > -1 && row[idx] ? row[idx].replace(/"/g, '').trim() : row[fallback];
-                return parseFloat(val) || 0;
-            };
-
-            // 若找不到欄位，預設 fallback 到 2, 12, 13 (依您提供的 CSV 結構: 商品=2, PriceRank=12, VolRank=13)
-            // 注意 CSV split 後的 index 可能因逗號而變，建議依賴 findIndex
-            const name = getName(nameIdx, 2); 
-            const pr = getNum(prIdx, 12);
-            const vr = getNum(vrIdx, 13);
-
-            // 簡單過濾無效資料
-            if (name) {
-                chartData.names.push(name);
-                chartData.prs.push(pr);
-                chartData.vrs.push(vr);
-            }
-        }
-
-        document.getElementById('drop-zone').style.display = 'none';
-        document.getElementById('chart-area').style.display = 'block';
-        drawChart(chartData);
-    }
-
-    function showGreeting(uid, type, expiry) {
-        const el = document.getElementById('user-greeting');
-        const d = expiry; 
-        const dateStr = d.length === 8 ? `${d.substr(0,4)}/${d.substr(4,2)}/${d.substr(6,2)}` : d;
-        const badgeClass = type === '1' ? 'badge-partner' : 'badge-vip';
-        const badgeText = type === '1' ? '🤝 合作夥伴' : `👑 VIP (~${dateStr})`;
-        
-        el.innerHTML = `<span class="uid-text">${uid}</span><span class="badge ${badgeClass}">${badgeText}</span>`;
-        el.style.display = 'block';
-    }
-
-    function showError(msg) {
-        statusMsg.innerText = msg;
-        statusMsg.style.display = 'block';
-    }
-
-    function sendLog(uid, type, status) {
-        fetch(`${LOG_API_URL}?uid=${encodeURIComponent(uid)}&type=${type}&status=${status}`, { method: 'POST', mode: 'no-cors' });
-    }
-
-    function drawChart(data) {
-        const ctx = document.getElementById('stockChart').getContext('2d');
-        if (myChart) myChart.destroy(); // 如果舊圖表存在，先銷毀
-
-        myChart = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: data.names, // 使用 CSV 裡的股票名稱
-                datasets: [{
-                    label: '籌碼 PR',
-                    data: data.prs, // 使用 CSV 裡的 PR 數值
-                    backgroundColor: 'rgba(54, 162, 235, 0.7)',
-                    borderColor: 'rgba(54, 162, 235, 1)',
-                    borderWidth: 1
-                }, {
-                    label: '量能 VR',
-                    data: data.vrs, // 使用 CSV 裡的 VR 數值
-                    backgroundColor: 'rgba(255, 99, 132, 0.7)',
-                    borderColor: 'rgba(255, 99, 132, 1)',
-                    borderWidth: 1
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    y: { beginAtZero: true, max: 100 } // 假設 PR/VR 滿分是 100
-                }
-            }
-        });
-    }
-
-    /**
-     * 解析 XS 混淆字串
-     * 輸入範例: "TradeDate#WrTywQprQbbjKCOTSEQEU"
-     */
-
-/**
- * 1. 解析 XS 混淆字串 (核心函式)
- */
-    function parseXQSignature(fullString) {
-        const HEADER = "TradeDate#";
-        
-        // 基礎檢核
-        if (!fullString || !fullString.startsWith(HEADER)) {
-            return { valid: false, message: "格式錯誤" };
-        }
-
-        const content = fullString.substring(HEADER.length);
-        const MAP_DATE = "QwErTyUiOp";   // 0-9
-        const MAP_ID   = "abcdefghij";   // 0-9
-
-        function decodeDigit(char) {
-            const idx = MAP_DATE.indexOf(char);
-            return idx > -1 ? idx.toString() : "?";
-        }
-
-        if (content.length < 13) return { valid: false, message: "長度不足" };
-
-        const encSig    = content.substring(0, 4);
-        const encStatus = content.substring(4, 5); 
-        const encMMDD   = content.substring(5, 9); 
-        const encYYYY   = content.substring(content.length - 4); 
-        const encID     = content.substring(9, content.length - 4); 
-
-        // --- A. 還原防偽簽章 (這是新增的修改) ---
-        let sigStr = "";
-        for (let c of encSig) sigStr += decodeDigit(c);
-        const signature = parseInt(sigStr, 10); // 轉成數字，例如 1521
-
-        // --- B. 還原日期 (期限) ---
-        let yyyy = ""; for (let c of encYYYY) yyyy += decodeDigit(c);
-        let mmdd = ""; for (let c of encMMDD) mmdd += decodeDigit(c);
-        const fullDate = yyyy + mmdd;
-        const isPermanent = (fullDate === "13572468");
-
-        // --- C. 還原狀態 & 過期判斷 ---
-        const status = decodeDigit(encStatus);
-        let isExpired = false;
-        
-        if (!isPermanent) {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            // JS 月份從 0 開始
-            const expDate = new Date(parseInt(yyyy), parseInt(mmdd.substring(0, 2)) - 1, parseInt(mmdd.substring(2)));
-            if (expDate < today) {
-                isExpired = true;
-            }
-        }
-
-        // --- D. 還原 ID ---
-        let rawIDReversed = "";
-        for (let c of encID) {
-            const idx = MAP_ID.indexOf(c);
-            if (idx > -1) rawIDReversed += idx.toString();
-            else rawIDReversed += c;
-        }
-        const finalID = rawIDReversed.split("").reverse().join("");
-
-        return {
-            valid: true,
-            signature: signature, // 回傳解碼後的簽章 (例如 1521)
-            userID: finalID,
-            date: isPermanent ? "無期限" : `${yyyy}/${mmdd.substring(0,2)}/${mmdd.substring(2)}`,
-            status: status, 
-            statusText: (status === "1") ? "綁定戶" : "VIP",
-            isExpired: isExpired,
-            rawDate: fullDate
-        };
-    }
-
-/**
- * 2. 驗證 CSV 是否偽造 (這是第二步的實作)
- * * @param {string} headerString - CSV 第一欄的標頭 (包含 TradeDate#...)
- * @param {string} firstDateValue - CSV 第一欄第一列的日期 (例如 "20260212")
- */
-    function verifyCSV(headerString, firstDateValue) {
-        // 1. 先解析表頭
-        const info = parseXQSignature(headerString);
-        
-        if (!info.valid) {
-            console.error("表頭解析失敗:", info.message);
-            return false;
-        }
-
-        // 2. 取得 CSV 內的資料日期 (需轉為純數字)
-        // 假設傳入的是 "20260212" 或 "2026/02/12"
-        const cleanDateStr = firstDateValue.replace(/\//g, "").replace(/-/g, "");
-        const dataDate = parseInt(cleanDateStr, 10);
-
-        // 3. 執行防偽公式 (必須與 XS 一模一樣)
-        // 公式: (日期 * 3 + 888) % 10000
-        const calculatedSig = (dataDate * 3 + 888) % 10000;
-
-        // 4. 比對
-        if (calculatedSig !== info.signature) {
-            console.warn(`防偽警告: 計算值(${calculatedSig}) 與 簽章值(${info.signature}) 不符！`);
-            alert("警告：此檔案可能已經過期或是被篡改！(簽章驗證失敗)");
-            return false; // 驗證失敗
-        }
-
-        console.log("✅ 防偽驗證通過！");
-        return true; // 驗證成功
-    }
-
-</script>
 </body>
 </html>

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🧪XQ CSV 實驗室</title>
+    <title>🧪 XQ CSV 實驗室</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: 'Segoe UI', sans-serif; background: #f4f7f6; display: flex; flex-direction: column; align-items: center; padding: 20px; }
@@ -74,40 +74,45 @@
         const lines = csvText.trim().split(/\r?\n/);
         if (lines.length < 2) return showError("❌ 檔案內容為空");
 
-        // --- 驗證邏輯 ---
+        // 1. 取得 Header (第一欄)
+        // CSV 可能有 BOM (\ufeff)，需過濾
         const headers = lines[0].split(',');
-        const sigColIndex = headers.findIndex(h => h.includes('日期#'));
-        if (sigColIndex === -1) {
-            sendLog("Unknown", "0", "NoSignature");
-            return showError("❌ 格式錯誤：缺少簽章欄位");
+        let firstHeader = headers[0].trim();
+        if (firstHeader.charCodeAt(0) === 0xFEFF) {
+            firstHeader = firstHeader.substr(1);
         }
-
-        const rawSig = headers[sigColIndex].replace(/"/g, '').split('#')[1];
-        if (!rawSig) return showError("❌ 簽章讀取失敗");
-
-        const parts = rawSig.split('-'); 
-        if (parts.length < 4) return showError("❌ 簽章格式不完整");
-
-        const [sigCode, type, uid, expiry] = parts;
         
-        // 取得資料第一行的日期來驗證 Hash
+        // 2. 取得第一筆資料的日期 (第一欄)
         const firstDataRow = lines[1].split(',');
-        const dateVal = parseInt(firstDataRow[sigColIndex].replace(/"/g, ''));
-        const expectedCode = (dateVal * 3 + 888) % 10000;
+        const firstDateVal = firstDataRow[0].trim(); // 例如 "20260212"
 
-        if (parseInt(sigCode) !== expectedCode) {
-            sendLog(uid, type, "InvalidHash");
-            return showError(`❌ 驗證失敗：簽章不符 (Code Error)`);
+        // 3. 【關鍵】執行新版防偽驗證
+        // 呼叫 verifyCSV (它會自動呼叫 parseXQSignature)
+        const isSafe = verifyCSV(firstHeader, firstDateVal);
+
+        if (!isSafe) {
+            // 驗證失敗，阻擋執行
+            sendLog("Unknown", "0", "InvalidSignature");
+            return showError("❌ 驗證失敗：防偽簽章不符或檔案遭篡改");
         }
 
-        // --- 驗證成功，開始處理數據 ---
-        showGreeting(uid, type, expiry);
-        sendLog(uid, type, "Valid");
+        // 4. 驗證通過，解析使用者資訊
+        const userInfo = parseXQSignature(firstHeader);
+        
+        // 檢查是否過期 (雖然 XS 擋過了，前端再擋一次保險)
+        if (userInfo.isExpired) {
+            sendLog(userInfo.userID, userInfo.status, "Expired");
+            return showError(`❌ 您的權限已於 ${userInfo.date} 到期`);
+        }
 
-        // 解析數據 (假設 CSV 欄位順序: 日期..., 代碼, 名稱, PR, VR)
+        // 顯示歡迎訊息
+        showGreeting(userInfo.userID, userInfo.status, userInfo.rawDate);
+        sendLog(userInfo.userID, userInfo.status, "Valid");
+
+
+        // 5. 開始解析數據繪圖 (維持原有的繪圖邏輯)
         // 這裡我們做一個聰明的搜尋：找 "名稱", "PR", "VR" 所在的欄位
         const nameIdx = headers.findIndex(h => h.includes('名稱'));
-        // 支援多種寫法：PR, pr, 籌碼...
         const prIdx = headers.findIndex(h => h.toUpperCase().includes('PR')); 
         const vrIdx = headers.findIndex(h => h.toUpperCase().includes('VR'));
 
@@ -117,13 +122,10 @@
 
         const chartData = { names: [], prs: [], vrs: [] };
 
-        // 從第 1 行 (數據行) 開始跑
         for (let i = 1; i < lines.length; i++) {
             const row = lines[i].split(',');
             if (row.length < 3) continue;
 
-            // 如果找不到欄位名稱，就預設用第 2,3,4 欄 (索引 1,2,3)
-            // 注意：row[0]是日期, row[1]是代碼...
             const name = nameIdx > -1 ? row[nameIdx] : row[2]; 
             const pr = prIdx > -1 ? row[prIdx] : row[3];
             const vr = vrIdx > -1 ? row[vrIdx] : row[4];

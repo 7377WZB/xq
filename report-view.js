@@ -222,27 +222,63 @@ function getLatestValue(id, type) {
     return getMatrixValue(id, 0, type);
 }
 
-// 樣式：決定格子的顏色與文字
+// 樣式：決定格子的顏色與文字 (整合 Heatmap)
 function getCellStyle(val, type) {
-    // A. 價PR / 量PR
+    // A. 價PR / 量PR (使用熱力圖邏輯)
     if (type === 'p_rank' || type === 'v_rank') {
         const num = Math.floor(val);
-        if (num === 0) return { label: '-', textClass: 'text-gray-300', bgStyle: '' };
+        if (!num && num !== 0) return { label: '-', textClass: 'text-gray-300', bgStyle: '' };
         
-        if (num >= 95) return { label: num, textClass: 'text-white font-bold', bgStyle: 'background-color: #7c3aed;' }; // 紫
-        if (num >= 90) return { label: num, textClass: 'text-white font-bold', bgStyle: 'background-color: #ef4444;' }; // 紅
-        if (num >= 80) return { label: num, textClass: 'text-red-700 font-bold', bgStyle: 'background-color: #fee2e2;' }; // 淺紅
-        return { label: num, textClass: 'text-gray-500', bgStyle: '' };
+        // 使用您提供的熱力圖配色函式
+        const styleStr = getHeatmapStyle(num);
+        return { 
+            label: num, 
+            textClass: '', // 文字顏色已包含在 styleStr 中
+            bgStyle: styleStr 
+        };
     }
     
-    // B. 量創高 (字串)
+    // B. 量創高 (保持原本邏輯，標示 H)
     if (type === 'volhigh') {
-        // 假設 "600"=創百日高, "200"=創60日高 (根據您的業務邏輯)
         if (val == "0" || !val) return { label: '', textClass: '', bgStyle: '' };
-        return { label: 'H', textClass: 'text-white font-bold', bgStyle: 'background-color: #f59e0b;' }; // 橘色標記
+        return { label: 'H', textClass: 'text-white font-bold', bgStyle: 'background-color: #f59e0b;' }; // 橘色
     }
 
     return { label: val, textClass: '', bgStyle: '' };
+}
+
+// ★ 新增：熱力圖配色核心 (您的原始代碼)
+function getHeatmapStyle(val) {
+    if (val === null || val === undefined || isNaN(val)) return "";
+    
+    const v = parseFloat(val);
+
+    // 97分以上：強調顯示 (亮粉紅底、白字、特大粗體)
+    if (v >= 97) {
+        return "background-color: #C71585; color: #fff; font-size: 1.1em; font-weight: 900;"; 
+        // 註: font-size 我稍微調小至 1.1em 以免撐破表格，您可自行改回 1.3em
+    }
+
+    let r, g, b, textColor;
+    const BASE = 230; // 基礎亮度 (數值越小顏色越深)
+
+    if (v >= 50) {
+        // 分數 >= 50：紅色漸層 (越高越紅)
+        const ratio = (v - 50) / 50; 
+        r = 255; 
+        g = Math.round(BASE - ((BASE - 60) * ratio)); 
+        b = Math.round(BASE - ((BASE - 60) * ratio));
+        // 數值很高時字體轉白，否則深黑
+        textColor = (v >= 85) ? '#fff' : '#333';
+    } else {
+        // 分數 < 50：綠色漸層 (越低越綠)
+        const ratio = (50 - v) / 50; 
+        r = Math.round(BASE - ((BASE - 40) * ratio)); 
+        g = Math.round(BASE - ((BASE - 160) * ratio)); 
+        b = Math.round(BASE - ((BASE - 40) * ratio));
+        textColor = (v <= 15) ? '#fff' : '#333';
+    }
+    return `background-color: rgb(${r},${g},${b}); color: ${textColor};`;
 }
 
 // 輔助：Sparkline

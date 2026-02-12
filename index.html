@@ -67,71 +67,113 @@
         statusMsg.style.display = 'none';
         const reader = new FileReader();
         reader.onload = (e) => parseAndValidate(e.target.result);
-        reader.readAsText(file); // 若中文亂碼可改用 'Big5'
+        // ★ 強制指定 Big5 編碼 (解決中文亂碼與定位偏移)
+        reader.readAsText(file, 'Big5');
     }
 
     function parseAndValidate(csvText) {
+        // 1. 切割行 (處理各種換行符號)
         const lines = csvText.trim().split(/\r?\n/);
-        if (lines.length < 2) return showError("❌ 檔案內容為空");
-
-        // 1. 取得 Header (第一欄)
-        const headers = lines[0].split(',');
         
-        // ★ 修正：去除 BOM 與 雙引號
-        let firstHeader = headers[0].trim().replace(/"/g, '');
-        if (firstHeader.charCodeAt(0) === 0xFEFF) {
-            firstHeader = firstHeader.substr(1);
+        // 2. ★ 關鍵修正：動態尋找表頭所在的行數
+        // 我們不假設它在第幾行，而是直接找哪一行有 "TradeDate#"
+        let headerRowIndex = -1;
+        let headers = [];
+
+        for (let i = 0; i < lines.length; i++) {
+            // 簡單判斷：該行包含 "TradeDate#" 且有 "代碼" 或 "商品"
+            if (lines[i].includes('TradeDate#')) {
+                headerRowIndex = i;
+                // 切割並去除引號
+                headers = lines[i].split(',').map(h => h.trim().replace(/"/g, ''));
+                break;
+            }
         }
-        
-        // 2. 取得第一筆資料的日期 (第一欄)
-        const firstDataRow = lines[1].split(',');
-        // ★ 修正：日期也建議去除雙引號，以免 parseInt 讀到非數字
-        const firstDateVal = firstDataRow[0].trim().replace(/"/g, ''); 
 
-        // 3. 執行防偽驗證
-        const isSafe = verifyCSV(firstHeader, firstDateVal);
+        if (headerRowIndex === -1) {
+            return showError("❌ 格式錯誤：找不到 'TradeDate#' 簽章欄位，請確認這是正確的 XQ 匯出檔。");
+        }
+
+        // 3. 抓出加密簽章字串 (Column Name)
+        // 尋找 headers 陣列中，開頭是 TradeDate# 的那個欄位
+        const sigColIndex = headers.findIndex(h => h.startsWith('TradeDate#'));
+        if (sigColIndex === -1) return showError("❌ 簽章欄位定位失敗");
+
+        const headerString = headers[sigColIndex]; // 例如: "TradeDate#wyEwEQQpQOKCOTSEQEU"
+
+        // 4. 抓出資料列 (表頭的下一行)
+        if (lines.length <= headerRowIndex + 1) return showError("❌ 檔案中沒有資料");
+        
+        const firstDataRowRaw = lines[headerRowIndex + 1];
+        const firstDataRow = firstDataRowRaw.split(',');
+        
+        // 取得該欄位的日期值 (例如: "20260211/20260210/...")
+        // 記得去除引號
+        let rawDateValue = firstDataRow[sigColIndex].trim().replace(/"/g, '');
+        
+        // ★ 關鍵修正：XQ 資料是 "20260211/20260210..."，我們只取第一個 (最新日期)
+        if (rawDateValue.includes('/')) {
+            rawDateValue = rawDateValue.split('/')[0];
+        }
+
+        // 5. 執行防偽驗證
+        const isSafe = verifyCSV(headerString, rawDateValue);
 
         if (!isSafe) {
             sendLog("Unknown", "0", "InvalidSignature");
             return showError("❌ 驗證失敗：防偽簽章不符或檔案遭篡改");
         }
 
-        // 4. 驗證通過，解析使用者資訊
-        const userInfo = parseXQSignature(firstHeader);
-        
+        // 6. 驗證通過，解析並顯示 User 資訊
+        const userInfo = parseXQSignature(headerString);
         if (userInfo.isExpired) {
             sendLog(userInfo.userID, userInfo.status, "Expired");
             return showError(`❌ 您的權限已於 ${userInfo.date} 到期`);
         }
 
-        // 顯示歡迎訊息
         showGreeting(userInfo.userID, userInfo.status, userInfo.rawDate);
         sendLog(userInfo.userID, userInfo.status, "Valid");
 
-
-        // 5. 解析數據繪圖
-        const nameIdx = headers.findIndex(h => h.includes('名稱'));
-        const prIdx = headers.findIndex(h => h.toUpperCase().includes('PR')); 
-        const vrIdx = headers.findIndex(h => h.toUpperCase().includes('VR'));
+        // 7. 開始繪圖 (從資料列開始讀取)
+        // 動態搜尋欄位索引
+        const nameIdx = headers.findIndex(h => h.includes('商品') || h.includes('名稱'));
+        const prIdx = headers.findIndex(h => h.toUpperCase().includes('PR') || h.toUpperCase().includes('PRICE')); 
+        const vrIdx = headers.findIndex(h => h.toUpperCase().includes('VR') || h.toUpperCase().includes('VOLRANK'));
 
         if (nameIdx === -1 || prIdx === -1 || vrIdx === -1) {
-            alert("⚠️ 提醒：找不到 '名稱'、'PR' 或 'VR' 欄位，將嘗試使用第 3,4,5 欄繪圖。");
+            alert("⚠️ 提醒：找不到 '商品'、'PR' 或 'VR' 欄位，將嘗試使用預設位置繪圖。");
         }
 
         const chartData = { names: [], prs: [], vrs: [] };
 
-        for (let i = 1; i < lines.length; i++) {
+        // 從 headerRowIndex + 1 開始跑回圈 (即資料區)
+        for (let i = headerRowIndex + 1; i < lines.length; i++) {
+            // 跳過空行
+            if (!lines[i].trim()) continue;
+
             const row = lines[i].split(',');
-            if (row.length < 3) continue;
+            // 確保欄位足夠
+            if (row.length < sigColIndex) continue;
 
-            const name = nameIdx > -1 ? row[nameIdx] : row[2]; 
-            const pr = prIdx > -1 ? row[prIdx] : row[3];
-            const vr = vrIdx > -1 ? row[vrIdx] : row[4];
+            // 取值並去引號
+            const getName = (idx, fallback) => idx > -1 && row[idx] ? row[idx].replace(/"/g, '').trim() : row[fallback];
+            const getNum = (idx, fallback) => {
+                let val = idx > -1 && row[idx] ? row[idx].replace(/"/g, '').trim() : row[fallback];
+                return parseFloat(val) || 0;
+            };
 
-            // 確保數據也沒有引號
-            if(name) chartData.names.push(name.replace(/"/g, ''));
-            if(pr) chartData.prs.push(parseFloat(pr.replace(/"/g, '')));
-            if(vr) chartData.vrs.push(parseFloat(vr.replace(/"/g, '')));
+            // 若找不到欄位，預設 fallback 到 2, 12, 13 (依您提供的 CSV 結構: 商品=2, PriceRank=12, VolRank=13)
+            // 注意 CSV split 後的 index 可能因逗號而變，建議依賴 findIndex
+            const name = getName(nameIdx, 2); 
+            const pr = getNum(prIdx, 12);
+            const vr = getNum(vrIdx, 13);
+
+            // 簡單過濾無效資料
+            if (name) {
+                chartData.names.push(name);
+                chartData.prs.push(pr);
+                chartData.vrs.push(vr);
+            }
         }
 
         document.getElementById('drop-zone').style.display = 'none';

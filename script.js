@@ -308,7 +308,7 @@ function verifyCSV(headerString, firstDateValue) {
 
     // 3. 發送到 Google Apps Script
     // ★ 請務必將下方的網址換成您自己的 Web App URL
-    const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/您的ID/exec"; 
+    const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxY_KymrXXuPxiVjlEkvUltU3bnrp61mMqgqgTs5O1Q4HB-9RoIbFjj9hKiZC35AhSQ/exec"; 
 
     fetch(GOOGLE_SCRIPT_URL, {
         method: 'POST',

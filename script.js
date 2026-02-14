@@ -261,6 +261,7 @@ async function loadFromDB(key) {
     });
 }
 
+// 6. 簽章解析與 Google Sheet 寫入
 function parseXQSignature(fullString) {
     const HEADER = "TradeDate#";
     if (!fullString || !fullString.startsWith(HEADER)) return { valid: false };
@@ -292,4 +293,35 @@ function parseXQSignature(fullString) {
     };
 }
 
-function verifyCSV(headerString, firstDateValue) { return true; }
+// ★ 修正：恢復寫入 Google Sheet 的功能
+function verifyCSV(headerString, firstDateValue) {
+    // 1. 解析資訊
+    const userInfo = parseXQSignature(headerString);
+    
+    // 2. 準備要傳送的 payload
+    const payload = {
+        header: headerString,
+        firstDate: firstDateValue,
+        // 如果解析成功，直接傳送解析後的資料，方便後端紀錄
+        parsed: userInfo.valid ? userInfo : null
+    };
+
+    // 3. 發送到 Google Apps Script
+    // ★ 請務必將下方的網址換成您自己的 Web App URL
+    const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/您的ID/exec"; 
+
+    fetch(GOOGLE_SCRIPT_URL, {
+        method: 'POST',
+        mode: 'no-cors', // 重要：避免跨域錯誤
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+    }).then(() => {
+        console.log("Log sent to Google Sheet");
+    }).catch(err => {
+        console.error("Log failed", err);
+    });
+
+    return true; // 保持回傳 true 讓程式繼續執行
+}

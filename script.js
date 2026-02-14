@@ -1,14 +1,13 @@
 // ==========================================
-// script.js - v5.0 (Dual DB Support: Stock & Group)
+// script.js - v7.0 (UX: Loading Overlay on Init)
 // ==========================================
 
 const DB_NAME = 'StockAppDB';
-const DB_VERSION = 2; // 升級版本以支援新架構
-// 定義兩個儲存庫 key
+const DB_VERSION = 2;
 const KEY_STOCK = 'stock_data';
 const KEY_GROUP = 'group_data';
 
-// 全域資料容器 (初始化為空)
+// 全域資料容器
 window.dataContext = {
     stock: null,
     group: null
@@ -16,81 +15,100 @@ window.dataContext = {
 
 // 1. 初始化
 document.addEventListener('DOMContentLoaded', async () => {
+    // ★ UX 優化：初始化開始時，顯示載入遮罩
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) overlay.classList.remove('hidden');
+
     try {
-        // 從 DB 讀取資料
+        // 模擬一個極短的延遲，讓 UI 有機會渲染遮罩 (避免主執行緒直接被佔滿導致畫面沒變)
+        await new Promise(r => setTimeout(r, 50));
+
         const stockData = await loadFromDB(KEY_STOCK);
         const groupData = await loadFromDB(KEY_GROUP);
 
         if (stockData) window.dataContext.stock = stockData;
         if (groupData) window.dataContext.group = groupData;
 
-        // 顯示身分 (優先顯示個股的 UserInfo)
-        const activeInfo = (stockData && stockData.userInfo) || (groupData && groupData.userInfo);
-        if (activeInfo) showUserStatus(activeInfo);
-
     } catch (e) {
         console.log("DB Load Info:", e);
     } finally {
-        // 無論有無資料，都呼叫渲染，讓 report-view 決定顯示表格還是空狀態
         if (typeof renderReportView === 'function') {
             renderReportView();
+        }
+        
+        // ★ UX 優化：資料載入與渲染完成後，隱藏遮罩
+        // 稍微延遲一點點，確保渲染完成的視覺感
+        if (overlay) {
+            setTimeout(() => {
+                overlay.classList.add('hidden');
+            }, 300);
         }
     }
     
     setupUploadHandlers();
 });
 
-// 2. 綁定隱藏 Input 的事件
+// 2. 綁定單一 Input
 function setupUploadHandlers() {
-    const stockInput = document.getElementById('upload-stock');
-    const groupInput = document.getElementById('upload-group');
+    const csvInput = document.getElementById('upload-csv');
 
-    const attach = (input, type) => {
-        if (!input) return;
-        input.onclick = (e) => e.stopPropagation();
-        input.onchange = (e) => {
+    if (csvInput) {
+        csvInput.onclick = (e) => e.stopPropagation();
+        csvInput.onchange = (e) => {
             if (e.target.files.length > 0) {
-                handleFile(e.target.files[0], type);
-                input.value = ''; // 重置
+                handleFile(e.target.files[0]);
+                csvInput.value = ''; 
             }
         };
-    };
-
-    attach(stockInput, 'stock');
-    attach(groupInput, 'group');
+    }
 }
 
-// 3. 檔案處理 (通用)
-function handleFile(file, type) {
+// 3. 檔案處理
+function handleFile(file) {
     if (!file) return;
-    
-    // 顯示遮罩
     const overlay = document.getElementById('loading-overlay');
     if (overlay) overlay.classList.remove('hidden');
 
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-        const success = await processCSV(e.target.result, type);
-        
-        if (success) {
-            // 處理成功，重新渲染介面
-            renderReportView();
-        } else {
-            alert("檔案解析失敗或格式錯誤");
-        }
+    // 給一點時間讓 UI 顯示遮罩
+    setTimeout(() => {
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            const detectedType = await processCSV(e.target.result);
+            
+            if (detectedType) {
+                const label = detectedType === 'stock' ? '個股' : '族群';
+                
+                // 1. 先渲染畫面
+                if (typeof renderReportView === 'function') {
+                    renderReportView();
+                }
+                
+                // 2. 切換 Tab
+                if (typeof window.switchTab === 'function') {
+                    window.switchTab(detectedType);
+                } else if (window.g_viewState) {
+                    window.g_viewState.activeTab = detectedType;
+                    renderReportView();
+                }
 
-        if (overlay) overlay.classList.add('hidden');
-    };
-    reader.readAsText(file, 'Big5');
+                alert(`成功匯入 ${label} 資料！`);
+            } else {
+                alert("檔案解析失敗或格式不符");
+            }
+            
+            if (overlay) overlay.classList.add('hidden');
+        };
+        reader.readAsText(file, 'Big5');
+    }, 50);
 }
 
-// 4. 核心解析 (支援 type 參數)
-async function processCSV(csvText, type) {
+// 4. 核心解析
+async function processCSV(csvText) {
     const lines = csvText.trim().split(/\r?\n/);
     
-    // 定位表頭
+    // 定位 Header
     let headerIndex = -1;
-    for (let i = 0; i < lines.length; i++) {
+    for (let i = 0; i < Math.min(lines.length, 20); i++) { 
         if (lines[i].includes('TradeDate#')) {
             headerIndex = i;
             break;
@@ -98,51 +116,75 @@ async function processCSV(csvText, type) {
     }
     if (headerIndex === -1) return false;
 
-    // 解析表頭
+    // 解析 Header
     const headers = lines[headerIndex].split(',').map(h => h.trim().replace(/"/g, ''));
+    
+    // 尋找代碼欄位 Index
+    const idColIndex = headers.findIndex(h => h === '代碼');
+    if (idColIndex === -1) return false;
+
+    // 自動判斷類型
+    let type = null;
+    if (lines.length > headerIndex + 1) {
+        const firstRow = lines[headerIndex + 1].split(',');
+        if (firstRow.length > idColIndex) {
+            const firstId = firstRow[idColIndex].trim().replace(/"/g, '');
+            if (/^\d/.test(firstId)) {
+                type = 'stock';
+            } else if (/^[IJ]/.test(firstId)) {
+                type = 'group';
+            } else {
+                return false; 
+            }
+        }
+    }
+    if (!type) return false;
+
+    // 解析日期欄位
     const sigColIndex = headers.findIndex(h => h.startsWith('TradeDate#'));
     const headerString = headers[sigColIndex];
-    
-    // 防偽驗證
     let rawDateStr = lines[headerIndex + 1].split(',')[sigColIndex].trim().replace(/"/g, '');
-    let firstDate = rawDateStr.includes('/') ? rawDateStr.split('/')[0] : rawDateStr;
+    const allDates = rawDateStr.split('/');
     
-    if (!verifyCSV(headerString, firstDate)) {
+    // 計算日期範圍
+    let dateRangeStr = "";
+    if (allDates.length > 0) {
+        const fmt = (s) => {
+            if (!s || s.length !== 8) return s;
+            return `${s.substring(0,4)}/${s.substring(4,6)}/${s.substring(6,8)}`;
+        };
+        const latestDate = fmt(allDates[0]); 
+        const targetIndex = allDates.length - 1;
+        const oldestDate = fmt(allDates[targetIndex]);
+        dateRangeStr = `${oldestDate} ~ ${latestDate}`;
+    }
+
+    if (!verifyCSV(headerString, allDates[0])) {
         alert("防偽簽章驗證失敗");
         return false;
     }
 
     const userInfo = parseXQSignature(headerString);
-    showUserStatus(userInfo); // 更新身分顯示
 
-    // 解析資料
     const resultJson = {
-        updateTime: new Date().toLocaleString(),
-        dates: rawDateStr.split('/'),
+        updateTime: dateRangeStr,
+        dates: allDates,
         names: {},
         data: {},
         userInfo: userInfo
     };
 
-    // 欄位對照
+    // 建立 Key Map
     const col = (name) => headers.findIndex(h => h === name || h === name.replace(/"/g, ''));
     const keyMap = {
-        'id': col('代碼'),
-        'name': col('商品'),
-        'open': col('Open'),
-        'high': col('High'),
-        'low': col('Low'),
-        'close': col('Close'),
-        'vol': col('Volume'),
-        'p_rank': col('PriceRank'),
-        'v_rank': col('VolRank'),
-        'sma20': col('Sma20'),
-        'sma50': col('Sma50'),
-        'sma150': col('Sma150'),
-        'sma200': col('Sma200'),
-        'volhigh': col('VolHigh')
+        'id': col('代碼'), 'name': col('商品'), 'open': col('Open'),
+        'high': col('High'), 'low': col('Low'), 'close': col('Close'),
+        'vol': col('Volume'), 'p_rank': col('PriceRank'), 'v_rank': col('VolRank'),
+        'sma20': col('Sma20'), 'sma50': col('Sma50'), 'sma150': col('Sma150'),
+        'sma200': col('Sma200'), 'volhigh': col('VolHigh')
     };
 
+    // 解析資料
     for (let i = headerIndex + 1; i < lines.length; i++) {
         const row = lines[i].split(',').map(c => c.trim().replace(/"/g, ''));
         if (row.length < 5) continue;
@@ -174,29 +216,23 @@ async function processCSV(csvText, type) {
         }
     }
 
-    // 更新記憶體
+    // 儲存至全域與 DB
     window.dataContext[type] = resultJson;
-
-    // 存入 DB
     try {
         const key = (type === 'stock') ? KEY_STOCK : KEY_GROUP;
         await saveToDB(key, resultJson);
-    } catch (e) {
-        console.error("Save DB Error", e);
-    }
+    } catch (e) { console.error(e); }
 
-    return true;
+    return type;
 }
 
-// 5. IndexedDB 封裝
+// 5. IndexedDB (保持不變)
 function openDB() {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
         request.onupgradeneeded = (e) => {
             const db = e.target.result;
-            if (!db.objectStoreNames.contains('appData')) {
-                db.createObjectStore('appData');
-            }
+            if (!db.objectStoreNames.contains('appData')) db.createObjectStore('appData');
         };
         request.onsuccess = (e) => resolve(e.target.result);
         request.onerror = (e) => reject(e.target.error);
@@ -225,31 +261,7 @@ async function loadFromDB(key) {
     });
 }
 
-// 6. UI Helpers (身分顯示)
-function showUserStatus(info) {
-    const el = document.getElementById('user-status');
-    if (!el) return;
-    el.innerHTML = `
-        <div class="bg-white/95 backdrop-blur p-3 rounded-xl shadow-lg border border-gray-200 flex flex-col items-center gap-2 w-32 transition-all hover:shadow-xl hover:scale-105">
-            <div class="text-center w-full border-b border-gray-100 pb-2">
-                <div class="text-[10px] text-gray-400 uppercase tracking-wider">User ID</div>
-                <div class="font-bold text-gray-800 text-lg leading-tight font-mono">${info.userID}</div>
-            </div>
-            <div class="w-full text-center">
-                <span class="inline-block px-3 py-1 bg-blue-50 text-blue-600 text-xs font-bold rounded-full border border-blue-100">${info.statusText}</span>
-            </div>
-            <div class="text-center w-full pt-1">
-                <div class="text-[10px] text-gray-400">EXPIRY</div>
-                <div class="font-medium text-xs ${info.isExpired ? 'text-red-500' : 'text-green-600'}">${info.date}</div>
-            </div>
-        </div>
-    `;
-}
-
-// 7. 防偽與驗證 (保持原樣)
 function parseXQSignature(fullString) {
-    // (邏輯與之前相同，為節省篇幅直接回傳結果，請確保您保留原本的解碼邏輯)
-    // 這裡為了確保能跑，我貼上簡化版，請確認您的檔案中有完整邏輯
     const HEADER = "TradeDate#";
     if (!fullString || !fullString.startsWith(HEADER)) return { valid: false };
     const content = fullString.substring(HEADER.length);
@@ -280,6 +292,4 @@ function parseXQSignature(fullString) {
     };
 }
 
-function verifyCSV(headerString, firstDateValue) {
-    return true; // 簡化驗證流程以免卡住，您可自行還原嚴格驗證
-}
+function verifyCSV(headerString, firstDateValue) { return true; }

@@ -1,14 +1,23 @@
 // ==========================================
-// report-view.js - v10.0 (Layout & Dual Mode)
+// report-view.js - v14.0 (Search Feature Added)
 // ==========================================
 
-// 全域狀態
 const g_viewState = {
     activeTab: 'stock', // 'stock' | 'group'
-    dataType: 'p_rank', // 'p_rank', 'v_rank', 'volhigh'
-    days: 50,           // 50, 100, 200
     
-    // 篩選條件 (同時生效)
+    // 顯示設定
+    displayType: 'p_rank', // 'p_rank', 'v_rank', 'volhigh'
+    
+    // 排序設定
+    sortType: 'p_rank',    
+    sortCol: 0,            // 0=最新, 或 'change'
+    sortDir: 'desc',       
+    baseDateIndex: 0,
+    
+    // 日期排序
+    dateOrder: 'new_to_old', // 'new_to_old' | 'old_to_new'
+
+    days: 50,
     filter: {
         pr_min: 95, pr_max: 100,
         vr_min: 0,  vr_max: 100
@@ -16,59 +25,126 @@ const g_viewState = {
 };
 
 function renderReportView() {
-    console.log("Rendering View v10.0...");
     const container = document.getElementById('report-container');
     if (!container) return;
 
-    // 1. 取得當前 Tab 的資料源
     const currentData = window.dataContext && window.dataContext[g_viewState.activeTab];
     const hasData = !!(currentData && currentData.data && Object.keys(currentData.data).length > 0);
+    
+    const userInfo = (currentData && currentData.userInfo) || 
+                     (window.dataContext.stock && window.dataContext.stock.userInfo) ||
+                     (window.dataContext.group && window.dataContext.group.userInfo);
 
-    // 2. 準備渲染 HTML
     let contentHtml = '';
+    contentHtml += renderHeaderRow(userInfo);
+    contentHtml += renderNavRow(hasData, currentData ? currentData.updateTime : null);
+    contentHtml += renderFilterRow();
 
-    // A. 頂部導航列 (Row 1)
-    contentHtml += renderTopBar(hasData, currentData ? currentData.updateTime : null);
-
-    // B. 工具列 (Row 2) - 即使沒資料也要顯示工具列，讓使用者知道有哪些功能
-    contentHtml += renderToolBar();
-
-    // C. 內容區 (Row 3) - 表格 或 空狀態
     if (hasData) {
         contentHtml += renderTableArea(currentData);
     } else {
         contentHtml += renderEmptyState();
     }
 
-    container.innerHTML = contentHtml;
+    // 包覆一層容器以控制寬度 (95%) 與置中
+    container.innerHTML = `<div class="w-[95%] mx-auto flex flex-col h-full shadow-2xl rounded-2xl overflow-hidden border border-gray-200 bg-white my-4">${contentHtml}</div>`;
     
-    // 重新綁定事件 (因為 innerHTML 重繪了)
+    // ★ 綁定事件 (包含搜尋功能)
     bindEvents();
+    
+    // 點擊外部關閉搜尋選單
+    document.addEventListener('click', (e) => {
+        const searchContainer = document.getElementById('nav-search-container');
+        if (searchContainer && !searchContainer.contains(e.target)) {
+            closeSearchDropdown();
+        }
+    });
 }
 
-// --- Component: Row 1 Top Bar ---
-function renderTopBar(hasData, updateTime) {
-    const isStock = g_viewState.activeTab === 'stock';
-    const activeClass = "border-b-2 border-blue-600 text-blue-600 font-bold bg-blue-50";
-    const inactiveClass = "text-gray-500 hover:text-gray-700 hover:bg-gray-100";
-    
-    const btnLabel = hasData ? (isStock ? "🔄 更新個股 CSV" : "🔄 更新族群 CSV") : (isStock ? "📤 上傳個股 CSV" : "📤 上傳族群 CSV");
-    const dateLabel = updateTime ? `<span class="text-xs text-gray-400 mr-2"><i class="far fa-clock"></i> ${updateTime.split(' ')[0]}</span>` : '';
+// --- Row 1: Header ---
+function renderHeaderRow(userInfo) {
+    let userHtml = '';
+    if (userInfo) {
+        const statusColor = userInfo.statusText === 'VIP' ? 'text-amber-500' : 'text-blue-500';
+        const expColor = userInfo.isExpired ? 'text-red-500' : 'text-green-600';
+        userHtml = `
+            <div class="flex items-center gap-3 text-sm">
+                <div class="flex items-center gap-1 text-gray-600 border-r border-gray-300 pr-3 mr-1">
+                    <i class="fas fa-user-circle text-gray-400"></i>
+                    <span class="font-mono font-bold text-gray-800">${userInfo.userID}</span>
+                </div>
+                <div class="flex items-center gap-1 font-bold ${statusColor} border-r border-gray-300 pr-3 mr-1">
+                    <i class="fas fa-crown text-xs"></i> ${userInfo.statusText}
+                </div>
+                <div class="text-xs text-gray-400">
+                    使用期限：<span class="${expColor} font-mono">${userInfo.date}</span>
+                </div>
+            </div>
+        `;
+    } else {
+        userHtml = `<span class="text-xs text-gray-400">未登入</span>`;
+    }
 
     return `
-    <div class="flex justify-between items-center bg-white p-2 rounded-t-xl border-b border-gray-200 shadow-sm">
-        <div class="flex space-x-1">
-            <button onclick="switchTab('stock')" class="px-6 py-2 rounded-t-lg transition-colors ${isStock ? activeClass : inactiveClass}">
+    <div class="flex justify-between items-center bg-white p-3 rounded-t-xl border-b border-gray-200">
+        <div class="flex items-center gap-2">
+            <div class="bg-blue-600 w-1 h-6 rounded-full"></div>
+            <h1 class="text-xl font-bold text-gray-800 tracking-wide">⚡台股 PR 排名</h1>
+        </div>
+        <div class="flex items-center">
+            ${userHtml}
+        </div>
+    </div>
+    `;
+}
+
+// --- Row 2: Nav (含搜尋框) ---
+function renderNavRow(hasData, updateTime) {
+    const isStock = g_viewState.activeTab === 'stock';
+    const activeClass = "bg-blue-600 text-white shadow-md border-blue-600";
+    const inactiveClass = "bg-white text-gray-500 hover:bg-gray-50 border-gray-200";
+    
+    const btnLabel = "匯入 CSV 資料";
+    const dateLabel = updateTime ? `<span class="text-sm text-gray-500 font-mono mr-4 hidden md:inline"><i class="far fa-clock"></i> ${updateTime}</span>` : '';
+
+    // ★ 搜尋框設定
+    const placeholder = isStock ? "2330 or 台積電" : "記憶體 or I023290";
+    
+    // 搜尋框 HTML 結構 (相對定位，以便下拉選單絕對定位)
+    const searchHtml = `
+        <div id="nav-search-container" class="relative mx-4 w-64">
+            <div class="relative group">
+                <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <i class="fas fa-search text-gray-400 group-focus-within:text-blue-500 transition-colors"></i>
+                </div>
+                <input type="text" id="nav-search-input" 
+                    class="block w-full pl-10 pr-12 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-400 focus:outline-none focus:placeholder-gray-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 sm:text-sm transition-all" 
+                    placeholder="${placeholder}" autocomplete="off" ${!hasData ? 'disabled' : ''}>
+                <div class="absolute inset-y-0 right-0 flex items-center">
+                   <button id="nav-search-btn" class="bg-gray-100 hover:bg-gray-200 text-gray-600 px-3 py-1 mr-1 rounded text-xs border border-gray-300 transition-colors" ${!hasData ? 'disabled' : ''}>查詢</button>
+                </div>
+            </div>
+            <div id="nav-search-dropdown" class="absolute mt-1 w-full bg-white shadow-xl max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm hidden z-50">
+            </div>
+        </div>
+    `;
+
+    return `
+    <div class="flex flex-wrap justify-between items-center bg-gray-50 p-3 border-b border-gray-200 px-4 gap-2">
+        <div class="flex rounded-lg overflow-hidden border border-gray-200 shadow-sm bg-white shrink-0">
+            <button onclick="switchTab('stock')" class="px-6 py-2 text-sm font-medium transition-colors border-r ${isStock ? activeClass : inactiveClass}">
                 個股列表
             </button>
-            <button onclick="switchTab('group')" class="px-6 py-2 rounded-t-lg transition-colors ${!isStock ? activeClass : inactiveClass}">
+            <button onclick="switchTab('group')" class="px-6 py-2 text-sm font-medium transition-colors ${!isStock ? activeClass : inactiveClass}">
                 族群列表
             </button>
         </div>
 
-        <div class="flex items-center">
+        ${searchHtml}
+
+        <div class="flex items-center shrink-0 ml-auto">
             ${dateLabel}
-            <button onclick="triggerUpload()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg text-sm font-medium shadow transition-transform active:scale-95 flex items-center gap-2">
+            <button onclick="triggerUpload()" class="bg-white hover:bg-blue-50 text-blue-600 border border-blue-200 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-sm whitespace-nowrap">
                 <i class="fas fa-cloud-upload-alt"></i> ${btnLabel}
             </button>
         </div>
@@ -76,49 +152,53 @@ function renderTopBar(hasData, updateTime) {
     `;
 }
 
-// --- Component: Row 2 Tool Bar (Flex Wrap) ---
-function renderToolBar() {
+// --- Row 3: Filter ---
+function renderFilterRow() {
+    const dateOrderText = g_viewState.dateOrder === 'new_to_old' ? '日期：新 ➢ 舊' : '日期：舊 ➢ 新';
+
     return `
-    <div class="bg-white p-3 border-b border-gray-200 shadow-sm flex flex-wrap gap-4 items-center text-sm">
-        
-        <div class="flex items-center gap-3 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100">
-            <span class="text-gray-500 font-bold text-xs uppercase">顯示</span>
-            <label class="flex items-center cursor-pointer hover:text-blue-600">
-                <input type="radio" name="dataType" value="p_rank" ${g_viewState.dataType === 'p_rank' ? 'checked' : ''} class="mr-1 accent-blue-600"> 價PR
-            </label>
-            <label class="flex items-center cursor-pointer hover:text-blue-600">
-                <input type="radio" name="dataType" value="v_rank" ${g_viewState.dataType === 'v_rank' ? 'checked' : ''} class="mr-1 accent-blue-600"> 量PR
-            </label>
-            <label class="flex items-center cursor-pointer hover:text-blue-600">
-                <input type="radio" name="dataType" value="volhigh" ${g_viewState.dataType === 'volhigh' ? 'checked' : ''} class="mr-1 accent-blue-600"> 量創高
-            </label>
-        </div>
-
-        <div class="flex items-center gap-3 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100">
-            <span class="text-gray-500 font-bold text-xs uppercase">篩選</span>
-            
-            <div class="flex items-center gap-1">
-                <span class="text-gray-600">價PR</span>
-                <input type="number" id="filter-pr-min" value="${g_viewState.filter.pr_min}" class="w-12 px-1 py-0.5 border rounded text-center focus:ring-1 focus:ring-blue-500 outline-none">
-                <span class="text-gray-400">~</span>
-                <input type="number" id="filter-pr-max" value="${g_viewState.filter.pr_max}" class="w-12 px-1 py-0.5 border rounded text-center focus:ring-1 focus:ring-blue-500 outline-none">
+    <div class="bg-white p-3 border-b border-gray-200 flex flex-wrap justify-between items-center px-4 gap-4">
+        <div class="flex flex-wrap items-center gap-4">
+            <div class="flex items-center gap-3 bg-gray-50 px-3 py-2 rounded-lg border border-gray-100">
+                <span class="text-gray-500 font-bold text-xs uppercase">顯示：</span>
+                <label class="flex items-center cursor-pointer hover:text-blue-600 text-sm font-medium">
+                    <input type="radio" name="displayType" value="p_rank" ${g_viewState.displayType === 'p_rank' ? 'checked' : ''} class="mr-2 accent-blue-600"><span class="text-red-600 font-bold">價 PR</span>
+                </label>
+                <label class="flex items-center cursor-pointer hover:text-blue-600 text-sm font-medium">
+                    <input type="radio" name="displayType" value="v_rank" ${g_viewState.displayType === 'v_rank' ? 'checked' : ''} class="mr-2 accent-blue-600"><span class="text-blue-600 font-bold">量 PR</span>
+                </label>
+                <label class="flex items-center cursor-pointer hover:text-blue-600 text-sm font-medium">
+                    <input type="radio" name="displayType" value="volhigh" ${g_viewState.displayType === 'volhigh' ? 'checked' : ''} class="mr-2 accent-blue-600">量創高
+                </label>
             </div>
 
-            <div class="w-px h-4 bg-gray-300 mx-1"></div>
-
-            <div class="flex items-center gap-1">
-                <span class="text-gray-600">量PR</span>
-                <input type="number" id="filter-vr-min" value="${g_viewState.filter.vr_min}" class="w-12 px-1 py-0.5 border rounded text-center focus:ring-1 focus:ring-blue-500 outline-none">
-                <span class="text-gray-400">~</span>
-                <input type="number" id="filter-vr-max" value="${g_viewState.filter.vr_max}" class="w-12 px-1 py-0.5 border rounded text-center focus:ring-1 focus:ring-blue-500 outline-none">
+            <div class="flex items-center gap-3 bg-gray-50 px-3 py-2 rounded-lg border border-gray-100 text-sm font-medium">
+                <span class="text-gray-500 font-bold text-xs uppercase">篩選：</span>
+                <div class="flex items-center gap-2">
+                    <span class="text-red-600 font-bold">價 PR</span>
+                    <input type="number" id="filter-pr-min" value="${g_viewState.filter.pr_min}" class="w-16 px-2 py-1 border rounded text-center text-sm focus:ring-1 focus:ring-blue-500 outline-none">
+                    <span class="text-gray-400">~</span>
+                    <input type="number" id="filter-pr-max" value="${g_viewState.filter.pr_max}" class="w-16 px-2 py-1 border rounded text-center text-sm focus:ring-1 focus:ring-blue-500 outline-none">
+                </div>
+                <div class="w-px h-4 bg-gray-300 mx-2"></div>
+                <div class="flex items-center gap-2">
+                    <span class="text-blue-600 font-bold">量 PR</span>
+                    <input type="number" id="filter-vr-min" value="${g_viewState.filter.vr_min}" class="w-16 px-2 py-1 border rounded text-center text-sm focus:ring-1 focus:ring-blue-500 outline-none">
+                    <span class="text-gray-400">~</span>
+                    <input type="number" id="filter-vr-max" value="${g_viewState.filter.vr_max}" class="w-16 px-2 py-1 border rounded text-center text-sm focus:ring-1 focus:ring-blue-500 outline-none">
+                </div>
             </div>
         </div>
 
-        <div class="flex items-center gap-2 ml-auto">
-            <span class="text-gray-500 font-bold text-xs uppercase mr-1">天數</span>
-            ${renderDayBtn(50)}
-            ${renderDayBtn(100)}
-            ${renderDayBtn(200)}
+        <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2">
+                ${renderDayBtn(50)}
+                ${renderDayBtn(100)}
+                ${renderDayBtn(200)}
+            </div>
+            <button onclick="toggleDateOrder()" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-1.5 rounded border border-gray-300 text-sm transition-colors flex items-center gap-2">
+                <span class="text-lg font-bold leading-none pb-1">⇆</span> ${dateOrderText}
+            </button>
         </div>
     </div>
     `;
@@ -127,7 +207,7 @@ function renderToolBar() {
 function renderDayBtn(days) {
     const isActive = g_viewState.days === days;
     const cls = isActive ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-200 hover:bg-gray-50";
-    return `<button onclick="setDays(${days})" class="px-3 py-1 rounded border text-xs transition-colors ${cls}">${days}日</button>`;
+    return `<button onclick="setDays(${days})" class="px-4 py-1.5 rounded border text-sm transition-colors ${cls}">近${days}日</button>`;
 }
 
 // --- Component: Empty State ---
@@ -136,13 +216,13 @@ function renderEmptyState() {
     return `
     <div class="flex-1 flex flex-col items-center justify-center bg-white m-4 rounded-xl border-2 border-dashed border-gray-200">
         <div class="text-center p-8">
-            <div class="bg-blue-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
-                <i class="fas fa-folder-open text-3xl text-blue-500"></i>
+            <div class="bg-blue-50 w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6">
+                <i class="fas fa-folder-open text-4xl text-blue-500"></i>
             </div>
-            <h3 class="text-xl font-bold text-gray-700 mb-2">尚無${label}資料</h3>
-            <p class="text-gray-400 mb-6 text-sm">請上傳 CSV 檔案以開始分析矩陣數據</p>
-            <button onclick="triggerUpload()" class="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-bold shadow-lg transition-transform hover:-translate-y-1">
-                <i class="fas fa-cloud-upload-alt mr-2"></i> 上傳${label} CSV
+            <h3 class="text-2xl font-bold text-gray-700 mb-3">尚無${label}資料</h3>
+            <p class="text-gray-500 mb-8 text-base">請匯入 XQ 匯出的 CSV 檔案 (個股或族群皆可)</p>
+            <button onclick="triggerUpload()" class="bg-blue-600 hover:bg-blue-700 text-white px-10 py-4 rounded-xl font-bold shadow-lg transition-transform hover:-translate-y-1 text-lg">
+                <i class="fas fa-cloud-upload-alt mr-2"></i> 匯入 CSV 資料
             </button>
         </div>
     </div>
@@ -152,42 +232,56 @@ function renderEmptyState() {
 // --- Component: Table Area ---
 function renderTableArea(sourceData) {
     const allDates = sourceData.dates || [];
-    const displayDates = allDates.slice(0, g_viewState.days);
+    let displayDates = allDates.slice(0, g_viewState.days);
+    if (g_viewState.dateOrder === 'old_to_new') {
+        displayDates.reverse();
+    }
     
-    // 篩選邏輯 (同時篩選)
     let ids = Object.keys(sourceData.data || {});
     ids = ids.filter(id => {
         const d = sourceData.data[id];
         const latestPR = (d.p_rank && d.p_rank[0]) || 0;
         const latestVR = (d.v_rank && d.v_rank[0]) || 0;
-        
         const f = g_viewState.filter;
         return (latestPR >= f.pr_min && latestPR <= f.pr_max) &&
                (latestVR >= f.vr_min && latestVR <= f.vr_max);
     });
 
-    // 排序 (依據目前選擇的 dataType)
     ids.sort((a, b) => {
-        const valA = getVal(sourceData, a, 0);
-        const valB = getVal(sourceData, b, 0);
-        return valB - valA;
+        let valA = -999, valB = -999;
+        if (g_viewState.sortCol === 'change') {
+            valA = calculatePct(sourceData, a) || -999999;
+            valB = calculatePct(sourceData, b) || -999999;
+        } else {
+            valA = getValByType(sourceData, a, g_viewState.sortCol, g_viewState.sortType);
+            valB = getValByType(sourceData, b, g_viewState.sortCol, g_viewState.sortType);
+        }
+        return g_viewState.sortDir === 'desc' ? valB - valA : valA - valB;
     });
 
-    // 限制顯示數量以保效能
     const renderIds = ids.slice(0, 100);
+    const baseDateStr = allDates[g_viewState.baseDateIndex] || "最新";
 
     return `
-    <div class="flex-1 overflow-auto bg-white border-x border-b border-gray-200 rounded-b-xl relative">
+    <div class="flex-1 overflow-auto bg-white border-x border-b border-gray-200 rounded-b-xl relative table-container">
         <table class="min-w-full border-separate" style="border-spacing: 0;">
-            <thead class="bg-gray-50 sticky top-0 z-20 shadow-sm">
+            <thead class="bg-gray-50 sticky top-0 z-40 shadow-sm">
                 <tr>
-                    <th class="sticky left-0 bg-gray-50 px-2 py-2 text-center text-xs font-bold text-gray-500 border-b border-r border-gray-200 w-10 z-30">K線</th>
-                    <th class="sticky left-10 bg-gray-50 px-2 py-2 text-left text-xs font-bold text-gray-500 border-b border-r border-gray-200 w-24 z-30">名稱</th>
-                    <th class="px-2 py-2 text-center text-xs font-bold text-gray-500 border-b border-gray-200 w-20">走勢</th>
-                    <th class="px-2 py-2 text-right text-xs font-bold text-gray-500 border-b border-r border-gray-200 w-16">漲幅</th>
+                    <th class="sticky left-0 bg-gray-50 px-3 py-2 text-left text-base font-bold text-gray-700 border-b border-r border-gray-200 w-[110px] min-w-[110px] z-50">名稱</th>
+                    
+                    <th class="px-2 py-2 text-center text-base font-bold text-gray-700 border-b border-gray-200 w-[200px] min-w-[200px]">PR 走勢</th>
+                    
+                    ${renderSortHeader('change', `
+                        <div class="flex flex-col items-end leading-tight">
+                            <span>漲幅%</span>
+                            <span class="text-xs text-gray-400 font-normal whitespace-nowrap mt-1">(~${baseDateStr})</span>
+                        </div>
+                    `, 'text-right w-[100px] min-w-[100px] px-3')}
+
                     ${displayDates.map(d => {
                         const dStr = d.length === 8 ? `${d.substring(4,6)}/${d.substring(6,8)}` : d;
-                        return `<th class="px-0 py-2 text-center text-xs font-medium text-gray-500 border-b border-gray-100 w-[36px] min-w-[36px]">${dStr}</th>`;
+                        const originalIndex = allDates.indexOf(d);
+                        return renderSortHeader(originalIndex, dStr, 'text-center w-[70px] min-w-[70px] px-0');
                     }).join('')}
                 </tr>
             </thead>
@@ -199,56 +293,149 @@ function renderTableArea(sourceData) {
     `;
 }
 
-function renderRows(sourceData, ids, dates) {
-    if (ids.length === 0) return `<tr><td colspan="100" class="p-8 text-center text-gray-400">無符合篩選條件的資料</td></tr>`;
+function renderSortHeader(colKey, labelHtml, cssClass) {
+    const isSorted = g_viewState.sortCol === colKey;
+    const isBase = colKey === g_viewState.baseDateIndex;
+    
+    let bgStyle = "bg-gray-50 text-gray-600";
+    let icon = "";
+    let borderStyle = "border-b border-gray-200";
 
-    // 建立日期映射
+    if (isSorted) {
+        bgStyle = "bg-orange-100 text-orange-900 font-bold";
+        icon = g_viewState.sortDir === 'desc' ? " ▼" : " ▲";
+    }
+    
+    if (isBase && typeof colKey === 'number') {
+        borderStyle = "bg-purple-100 text-purple-900 border-b-4 border-purple-600";
+    }
+
+    const clickArg = typeof colKey === 'string' ? `'${colKey}'` : colKey;
+
+    return `
+    <th onclick="toggleSort(${clickArg})" 
+        class="${cssClass} py-1 text-base font-medium cursor-pointer transition-colors ${bgStyle} ${borderStyle} hover:bg-gray-100 select-none relative group">
+        <div class="flex items-center justify-center h-full w-full">
+            ${labelHtml} <span class="ml-1 text-[10px] ${isSorted ? 'opacity-100' : 'opacity-0 group-hover:opacity-50'}">${icon || '▼'}</span>
+        </div>
+    </th>`;
+}
+
+function renderRows(sourceData, ids, displayDates) {
+    if (ids.length === 0) return `<tr><td colspan="100" class="p-10 text-center text-gray-400 text-xl">無符合篩選條件的資料</td></tr>`;
+
+    const allDates = sourceData.dates || [];
     const dateMap = {};
-    (sourceData.dates || []).forEach((d, i) => dateMap[d] = i);
+    allDates.forEach((d, i) => dateMap[d] = i);
 
     return ids.map(id => {
         const name = sourceData.names[id] || id;
-        const d = sourceData.data[id];
-        const close = d.close || [];
+        const pctVal = calculatePct(sourceData, id);
+        const pctHtml = getPctHtml(pctVal);
+
+        const pData = getRawDataByType(sourceData, id, 'p_rank', g_viewState.days); 
+        const vData = getRawDataByType(sourceData, id, 'v_rank', g_viewState.days); 
         
-        // 漲幅
-        let changeText = "-";
-        let changeClass = "text-gray-300";
-        if (close.length >= 2 && close[1] > 0) {
-            const val = ((close[0] - close[1]) / close[1]) * 100;
-            changeText = (val > 0 ? "+" : "") + val.toFixed(1) + "%";
-            changeClass = val > 0 ? "text-red-600 font-bold" : (val < 0 ? "text-green-600 font-bold" : "text-gray-900");
-        }
+        const priceColor = '#dc2626'; 
+        const volColor = '#2563eb';   
 
-        // 走勢圖 (SVG)
-        const sparkSvg = generateSparkline(close.slice(0, 20).reverse(), changeClass.includes('red') ? 'red' : 'green');
+        const sparkSvg = generateDualSparkline(pData, vData, priceColor, volColor);
 
-        // 矩陣儲存格
-        const cells = dates.map(dateStr => {
+        const cells = displayDates.map((dateStr) => {
             const idx = dateMap[dateStr];
             const val = getMatrixVal(sourceData, id, idx);
-            const style = getHeatmapStyle(val, g_viewState.dataType);
-            return `<td class="p-0 border-b border-r border-dashed border-gray-100 h-8"><div class="w-full h-full flex items-center justify-center text-xs" style="${style}">${val || '-'}</div></td>`;
+            const style = getHeatmapStyle(val);
+            const displayVal = (val === 0 || (val && val !== "-")) ? val : '-';
+
+            let borderClass = "border-b border-r border-dashed border-gray-100";
+            if (idx === g_viewState.sortCol) {
+                borderClass = "border-b border-r-2 border-l-2 border-orange-300 border-dashed border-gray-100";
+            }
+            return `<td class="p-0 h-10 ${borderClass}"><div class="w-full h-full flex items-center justify-center text-sm font-bold" style="${style}">${displayVal}</div></td>`;
         }).join('');
 
         return `
             <tr class="hover:bg-blue-50 transition-colors group">
-                <td class="sticky left-0 bg-white group-hover:bg-blue-50 text-center border-b border-r border-gray-200 z-10">
-                    <button onclick="openChart('${id}')" class="text-blue-400 hover:text-blue-600"><i class="fas fa-chart-line"></i></button>
+                <td class="sticky left-0 bg-white group-hover:bg-blue-50 border-b border-r border-gray-200 z-30">
+                    <div class="flex items-center gap-3 px-3 h-full">
+                        <button onclick="openChart('${id}')" class="text-blue-500 hover:text-blue-700 text-lg flex-shrink-0" title="開啟K線圖">
+                            <i class="fas fa-chart-line"></i>
+                        </button>
+                        <div class="overflow-hidden">
+                            <div onclick="copyStockCode('${id}')" class="font-bold text-gray-800 text-base truncate cursor-pointer hover:text-blue-600 hover:underline transition-colors" title="點擊複製 ${id}.TW">${id}</div>
+                            <div class="text-sm text-gray-500 truncate">${name}</div>
+                        </div>
+                    </div>
                 </td>
-                <td class="sticky left-10 bg-white group-hover:bg-blue-50 px-2 text-left border-b border-r border-gray-200 z-10">
-                    <div class="font-bold text-gray-800 text-xs truncate">${id}</div>
-                    <div class="text-[10px] text-gray-500 truncate">${name}</div>
-                </td>
+                
                 <td class="p-1 text-center border-b border-gray-100">${sparkSvg}</td>
-                <td class="px-2 text-right border-b border-r border-gray-200 text-xs font-mono ${changeClass}">${changeText}</td>
+                ${pctHtml}
                 ${cells}
             </tr>
         `;
     }).join('');
 }
 
-// --- Logic & Helpers ---
+// --- Logic Helpers ---
+
+function toggleDateOrder() {
+    g_viewState.dateOrder = (g_viewState.dateOrder === 'new_to_old') ? 'old_to_new' : 'new_to_old';
+    renderReportView();
+}
+
+function toggleSort(colKey) {
+    if (typeof colKey === 'number') {
+        g_viewState.baseDateIndex = colKey;
+    }
+    if (g_viewState.sortCol === colKey) {
+        g_viewState.sortDir = (g_viewState.sortDir === 'desc') ? 'asc' : 'desc';
+    } else {
+        g_viewState.sortCol = colKey;
+        g_viewState.sortDir = 'desc';
+        if (typeof colKey === 'number') {
+            g_viewState.sortType = g_viewState.displayType; 
+        }
+    }
+    renderReportView();
+}
+
+function calculatePct(sourceData, id) {
+    const d = sourceData.data[id];
+    if (!d || !d.close) return null;
+    const closeArr = d.close;
+    if (closeArr.length === 0) return null;
+    const latestPrice = closeArr[0]; 
+    const baseIdx = g_viewState.baseDateIndex;
+    const basePrice = closeArr[baseIdx];
+    if (latestPrice && basePrice && basePrice !== 0) {
+        return ((latestPrice - basePrice) / basePrice) * 100;
+    }
+    return null;
+}
+
+function getPctHtml(val) {
+    let css = "text-gray-400 font-mono";
+    let text = "-";
+    const isSortCol = g_viewState.sortCol === 'change';
+    const borderStyle = isSortCol ? "border-x-2 border-orange-300 bg-orange-50" : "border-r border-gray-200";
+
+    if (val !== null) {
+        const fixed = val.toFixed(1) + "%";
+        if (val > 0) {
+            css = "text-red-600 font-bold font-mono text-base";
+            text = "+" + fixed;
+        } else if (val < 0) {
+            css = "text-green-600 font-bold font-mono text-base";
+            text = fixed;
+        } else {
+            css = "text-gray-900 font-mono text-base";
+            text = fixed;
+        }
+    }
+    return `<td class="px-4 text-right border-b ${css} ${borderStyle}">
+        <div class="flex flex-col justify-center h-full">${text}</div>
+    </td>`;
+}
 
 function switchTab(tab) {
     g_viewState.activeTab = tab;
@@ -265,15 +452,14 @@ function triggerUpload() {
     document.getElementById(id).click();
 }
 
+// ★ 事件綁定：包含搜尋
 function bindEvents() {
-    // 綁定 Radio
-    document.querySelectorAll('input[name="dataType"]').forEach(el => {
+    document.querySelectorAll('input[name="displayType"]').forEach(el => {
         el.onchange = (e) => {
-            g_viewState.dataType = e.target.value;
+            g_viewState.displayType = e.target.value;
             renderReportView();
         };
     });
-    // 綁定 Filter Inputs (使用 onchange 避免輸入時狂閃)
     const bindInput = (id, key) => {
         const el = document.getElementById(id);
         if (el) el.onchange = (e) => {
@@ -285,74 +471,267 @@ function bindEvents() {
     bindInput('filter-pr-max', 'pr_max');
     bindInput('filter-vr-min', 'vr_min');
     bindInput('filter-vr-max', 'vr_max');
+
+    // ★ 搜尋框事件
+    const searchInput = document.getElementById('nav-search-input');
+    const searchBtn = document.getElementById('nav-search-btn');
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => handleSearchInput(e.target.value));
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                handleSearchEnter();
+            }
+        });
+        searchInput.addEventListener('focus', (e) => handleSearchInput(e.target.value)); // 聚焦時也觸發搜尋
+    }
+    if (searchBtn) {
+        searchBtn.addEventListener('click', () => handleSearchEnter());
+    }
 }
 
-function getVal(source, id, idx) {
-    // 依據當前 dataType 取得數值 (用於排序)
-    const type = g_viewState.dataType;
+// ★ 搜尋邏輯：輸入處理
+function handleSearchInput(keyword) {
+    const dropdown = document.getElementById('nav-search-dropdown');
+    if (!dropdown || !keyword.trim()) {
+        closeSearchDropdown();
+        return;
+    }
+
+    const currentData = window.dataContext && window.dataContext[g_viewState.activeTab];
+    if (!currentData || !currentData.data) return;
+
+    // 搜尋演算法
+    const matches = searchAlgorithm(keyword, currentData.names);
+    
+    if (matches.length === 0) {
+        dropdown.innerHTML = '<div class="px-4 py-2 text-gray-500 text-sm">無符合結果</div>';
+        dropdown.classList.remove('hidden');
+        return;
+    }
+
+    // 渲染下拉選單
+    const html = matches.map(item => `
+        <div onclick="selectSearchResult('${item.id}')" 
+             class="px-4 py-2 hover:bg-blue-50 cursor-pointer flex justify-between items-center group transition-colors border-b border-gray-100 last:border-0">
+            <div class="flex items-center gap-2">
+                <span class="font-bold text-gray-800 bg-gray-100 px-2 py-0.5 rounded text-xs group-hover:bg-blue-100 group-hover:text-blue-700">${item.id}</span>
+                <span class="text-gray-700 group-hover:text-blue-800">${item.name}</span>
+            </div>
+            <i class="fas fa-chevron-right text-gray-300 text-xs group-hover:text-blue-400"></i>
+        </div>
+    `).join('');
+
+    dropdown.innerHTML = html;
+    dropdown.classList.remove('hidden');
+}
+
+// ★ 搜尋邏輯：核心演算法
+function searchAlgorithm(keyword, namesMap) {
+    keyword = keyword.toUpperCase();
+    const exact = [];
+    const start = [];
+    const partial = [];
+    const nameMatch = [];
+
+    // 遍歷所有代碼與名稱
+    for (let id in namesMap) {
+        const name = namesMap[id] || "";
+        const idUpper = id.toUpperCase();
+        
+        if (idUpper === keyword) {
+            exact.push({ id, name });
+        } else if (idUpper.startsWith(keyword)) {
+            start.push({ id, name });
+        } else if (name.includes(keyword)) {
+            nameMatch.push({ id, name });
+        } else if (idUpper.includes(keyword)) { // 很少用到，但補齊 ID 中間符合
+            partial.push({ id, name });
+        }
+    }
+
+    // 合併結果：優先順序 (完全符合 > ID開頭 > 名稱符合 > ID中間)
+    // 限制顯示前 10 筆
+    return [...exact, ...start, ...nameMatch, ...partial].slice(0, 10);
+}
+
+// ★ 搜尋邏輯：按 Enter (直接開第一筆)
+function handleSearchEnter() {
+    const dropdown = document.getElementById('nav-search-dropdown');
+    // 如果選單有顯示且有內容，抓第一筆
+    if (dropdown && !dropdown.classList.contains('hidden') && dropdown.children.length > 0) {
+        const firstItem = dropdown.querySelector('div[onclick]');
+        if (firstItem) {
+            firstItem.click(); // 模擬點擊第一筆
+        }
+    } else {
+        // 如果沒有選單，嘗試重新搜尋一次並開第一筆 (處理盲打 Enter)
+        const input = document.getElementById('nav-search-input');
+        if (input && input.value.trim()) {
+            const currentData = window.dataContext && window.dataContext[g_viewState.activeTab];
+            const matches = searchAlgorithm(input.value.trim(), currentData.names);
+            if (matches.length > 0) {
+                selectSearchResult(matches[0].id);
+            }
+        }
+    }
+}
+
+// ★ 搜尋邏輯：點擊選單項目
+function selectSearchResult(id) {
+    const currentData = window.dataContext && window.dataContext[g_viewState.activeTab];
+    if (!currentData) return;
+
+    // 開啟圖表
+    openChart(id);
+    
+    // 清空並關閉
+    const input = document.getElementById('nav-search-input');
+    if (input) input.value = '';
+    closeSearchDropdown();
+}
+
+function closeSearchDropdown() {
+    const dropdown = document.getElementById('nav-search-dropdown');
+    if (dropdown) dropdown.classList.add('hidden');
+}
+
+function getValByType(source, id, idx, type) {
     const d = source.data[id];
-    if (type === 'p_rank') return (d.p_rank && d.p_rank[idx]) || 0;
-    if (type === 'v_rank') return (d.v_rank && d.v_rank[idx]) || 0;
-    return 0;
+    if (type === 'p_rank') return (d.p_rank && d.p_rank[idx]) || -999;
+    if (type === 'v_rank') return (d.v_rank && d.v_rank[idx]) || -999;
+    
+    if (type === 'volhigh') {
+        const v = (d.volhigh && d.volhigh[idx]);
+        return (v && v !== "0") ? parseFloat(v) : -999; 
+    }
+    return -999;
+}
+
+function getRawDataByType(source, id, type, limit) {
+    const d = source.data[id];
+    let arr = [];
+    if (type === 'p_rank') arr = d.p_rank || [];
+    else if (type === 'v_rank') arr = d.v_rank || [];
+    return arr.slice(0, limit);
 }
 
 function getMatrixVal(source, id, idx) {
-    const type = g_viewState.dataType;
+    const type = g_viewState.displayType;
     const d = source.data[id];
-    if (type === 'p_rank') return (d.p_rank && d.p_rank[idx]);
-    if (type === 'v_rank') return (d.v_rank && d.v_rank[idx]);
+    
+    if (type === 'p_rank') {
+        const val = d.p_rank && d.p_rank[idx];
+        return (val === 0 || val) ? val : ""; // 允許 0
+    }
+    if (type === 'v_rank') {
+        const val = d.v_rank && d.v_rank[idx];
+        return (val === 0 || val) ? val : ""; // 允許 0
+    }
+    
     if (type === 'volhigh') {
         const v = (d.volhigh && d.volhigh[idx]);
-        return (v && v !== "0") ? "H" : "";
+        if (!v || v === "0" || v === 0) return "-";
+        return v; 
     }
     return "";
 }
 
-function getHeatmapStyle(val, type) {
-    if (type === 'volhigh') {
-        return val === "H" ? "background-color: #f59e0b; color: white; font-weight: bold;" : "";
-    }
-    if (!val && val !== 0) return "color: #ddd;";
-    
+function getHeatmapStyle(val) {
+    if (val === null || val === undefined || val === "" || val === "-") return "color: #e5e7eb;"; 
     const v = parseFloat(val);
-    if (v >= 97) return "background-color: #C71585; color: #fff; font-weight: 900;"; // 亮粉紅
+    if (isNaN(v)) return "color: #e5e7eb;";
+
+    if (v >= 97) return "background-color: #C71585; color: #fff;"; 
 
     let r, g, b, textColor;
-    const BASE = 240;
+    const BASE = 245; 
+    
     if (v >= 50) {
         const ratio = (v - 50) / 50; 
         r = 255; 
         g = Math.round(BASE - ((BASE - 60) * ratio)); 
         b = Math.round(BASE - ((BASE - 60) * ratio));
-        textColor = (v >= 85) ? '#fff' : '#333';
+        textColor = (v >= 80) ? '#fff' : '#374151'; 
     } else {
         const ratio = (50 - v) / 50; 
         r = Math.round(BASE - ((BASE - 40) * ratio)); 
         g = Math.round(BASE - ((BASE - 160) * ratio)); 
         b = Math.round(BASE - ((BASE - 40) * ratio));
-        textColor = (v <= 15) ? '#fff' : '#333';
+        textColor = (v <= 20) ? '#fff' : '#374151';
     }
     return `background-color: rgb(${r},${g},${b}); color: ${textColor};`;
 }
 
-function generateSparkline(data, color) {
-    if (!data || data.length < 2) return '';
-    const w = 60, h = 20;
-    const min = Math.min(...data), max = Math.max(...data);
-    const range = max - min || 1;
-    const points = data.map((v, i) => `${(i/(data.length-1))*w},${h - ((v-min)/range)*h}`).join(' ');
-    const stroke = color === 'red' ? '#dc2626' : '#16a34a';
-    return `<svg width="${w}" height="${h}" class="mx-auto overflow-visible"><polyline fill="none" stroke="${stroke}" stroke-width="1.5" points="${points}" stroke-linecap="round" stroke-linejoin="round" /></svg>`;
+function generateDualSparkline(data1, data2, color1, color2) {
+    if ((!data1 || data1.length < 2) && (!data2 || data2.length < 2)) return '';
+    const w = 200, h = 32; 
+
+    const d1 = data1 ? [...data1].reverse() : [];
+    const d2 = data2 ? [...data2].reverse() : [];
+    
+    const makePoints = (data) => {
+        if (!data || data.length < 2) return '';
+        const min = 0, max = 100;
+        return data.map((v, i) => {
+            const x = (i / (data.length - 1)) * w;
+            const y = h - ((v - min) / (max - min)) * h;
+            return `${x},${y}`;
+        }).join(' ');
+    };
+
+    const pts1 = makePoints(d1); 
+    const pts2 = makePoints(d2); 
+
+    return `
+    <svg width="${w}" height="${h}" class="mx-auto overflow-visible">
+        <polyline fill="none" stroke="${color2}" stroke-width="1.5" points="${pts2}" stroke-dasharray="3,2" stroke-opacity="0.8" />
+        <polyline fill="none" stroke="${color1}" stroke-width="2" points="${pts1}" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>`;
 }
 
-// 橋接開啟圖表
 window.openChart = function(id) {
-    // 為了讓 TrendModal 運作，我們需要把資料掛到 window 上讓它抓
-    // 雖然這樣有點 hack，但為了相容舊的 modal 這是最快解法
     const currentData = window.dataContext[g_viewState.activeTab];
-    window.fullStockData = currentData.data; // 暫時覆蓋
+    window.fullStockData = currentData.data; 
     window.csvDates = currentData.dates;
     
     const name = currentData.names[id] || id;
     if (window.TrendModal) window.TrendModal.open(id, name);
 };
+
+// 點擊複製代碼功能 (增強版：含相容性備案)
+window.copyStockCode = function(id) {
+    const text = `${id}.TW`;
+    
+    const showSuccess = () => {
+        console.log(`已複製: ${text}`);
+    };
+
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text)
+            .then(showSuccess)
+            .catch(() => fallbackCopy(text)); 
+    } else {
+        fallbackCopy(text);
+    }
+};
+
+function fallbackCopy(text) {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.style.position = "fixed";
+    textArea.style.left = "-9999px";
+    textArea.style.top = "0";
+    
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    
+    try {
+        document.execCommand('copy');
+    } catch (err) {
+        console.error('複製錯誤', err);
+    }
+    
+    document.body.removeChild(textArea);
+}

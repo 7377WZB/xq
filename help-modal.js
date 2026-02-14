@@ -82,6 +82,8 @@ window.HelpModal = {
         return `
             <h2>1. 系統簡介</h2>
             <p>這是一個專為台股投資人設計的 <strong>PR (Percentile Rank) 排名系統</strong>。透過大數據分析，協助您快速找出市場中「股價強勢」與「成交量活絡」的個股或族群。</p>
+
+            <img src="img/demp.png">
             
             <div class="help-tip">
                 <i class="fas fa-lightbulb"></i> <strong>提示：</strong> 本系統完全在您的瀏覽器端執行，資料不會上傳至伺服器，請安心使用。

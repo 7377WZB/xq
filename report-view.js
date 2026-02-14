@@ -82,7 +82,7 @@ function renderHeaderRow(userInfo) {
             </div>
         `;
     } else {
-        userHtml = `<span class="text-xs text-gray-400">未登入</span>`;
+        userHtml = `<span class="text-xs text-gray-400">訪客</span>`;
     }
 
     return `

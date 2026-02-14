@@ -61,7 +61,7 @@ function renderReportView() {
     });
 }
 
-// --- Row 1: Header ---
+// --- Row 1: Header (Option B: 按鈕在標題旁) ---
 function renderHeaderRow(userInfo) {
     let userHtml = '';
     if (userInfo) {
@@ -90,6 +90,10 @@ function renderHeaderRow(userInfo) {
         <div class="flex items-center gap-2">
             <div class="bg-blue-600 w-1 h-6 rounded-full"></div>
             <h1 class="text-xl font-bold text-gray-800 tracking-wide">⚡台股 PR 排名</h1>
+            
+            <button onclick="window.HelpModal.open()" class="ml-3 px-2 py-0.5 rounded-md text-gray-400 hover:text-blue-600 hover:bg-blue-50 border border-transparent hover:border-blue-100 text-sm font-medium transition-all flex items-center gap-1" title="查看新手指南">
+                <i class="far fa-question-circle"></i> 使用說明
+            </button>
         </div>
         <div class="flex items-center">
             ${userHtml}

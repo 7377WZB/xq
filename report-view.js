@@ -448,8 +448,10 @@ function setDays(d) {
 }
 
 function triggerUpload() {
-    const id = g_viewState.activeTab === 'stock' ? 'upload-stock' : 'upload-group';
-    document.getElementById(id).click();
+    // 修正：統一觸發 script.js 定義的單一上傳入口
+    const el = document.getElementById('upload-csv');
+    if (el) el.click();
+    else alert("找不到上傳元件 (upload-csv)，請檢查 HTML");
 }
 
 // ★ 事件綁定：包含搜尋

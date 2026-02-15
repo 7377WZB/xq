@@ -60,9 +60,9 @@ window.TrendModal = {
                             <span style="color:#2962FF;">200</span>
                             <span style="color:#ddd; font-weight:normal;">|</span>
                             <span style="color:#000000;">副圖：</span>
-                            <span style="color:#FF0000;">價 PR</span>
-                            <span style="color:#2962FF;">量 PR</span>
-                            <span style="color:#000000;">量創高</span>
+                            <span style="color:#FF0000;">股價 PR</span>
+                            <span style="color:#2962FF;">籌碼 PR</span>
+                            <span style="color:#000000;">籌碼創高</span>
                         </div>
                     </div>
                     <span onclick="window.TrendModal.close()" style="cursor:pointer; font-size:2em; color:#999; line-height:0.5;">&times;</span>
@@ -269,7 +269,28 @@ window.TrendModal = {
             height: container.clientHeight,
             layout: { background: { type: 'solid', color: '#ffffff' }, textColor: '#333' },
             grid: { vertLines: { color: '#f0f0f0' }, horzLines: { color: '#f0f0f0' } },
-            localization: { locale: 'zh-TW', dateFormat: 'yyyy/MM/dd' },
+            // ★ 修改：判斷資料型態，如果是字串直接替換符號
+            localization: { 
+                locale: 'zh-TW', 
+                dateFormat: 'yyyy/MM/dd',
+                timeFormatter: (time) => {
+                    // 狀況 1: 如果 time 是字串 (例如 "2025-09-03")
+                    if (typeof time === 'string') {
+                        return time.replace(/-/g, '/');
+                    }
+                    
+                    // 狀況 2: 如果 time 是數字 (Timestamp)
+                    if (typeof time === 'number') {
+                        const date = new Date(time * 1000);
+                        const year = date.getFullYear();
+                        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                        const day = date.getDate().toString().padStart(2, '0');
+                        return `${year}/${month}/${day}`;
+                    }
+                    
+                    return time;
+                }
+            },
             timeScale: { borderColor: '#d1d4dc', rightOffset: 5, timeVisible: true },
             crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
             rightPriceScale: { 
@@ -403,10 +424,10 @@ window.TrendModal = {
                 <div style="display:flex; justify-content:space-between; margin-bottom:5px;"><span style="color:#bbb;">成交量</span><span>${vol ? Math.round(vol).toLocaleString() : '-'}</span></div>
                 ${vhHtml}
                 <div style="display:flex; justify-content:space-between; margin-top:5px; padding-top:5px; border-top:1px solid #555;">
-                    <span style="color:#FF0000; font-weight:bold;">價 PR</span><span style="font-weight:bold;">${pr !== null ? pr.toFixed(0) : '-'}</span>
+                    <span style="color:#FF0000; font-weight:bold;">股價 PR</span><span style="font-weight:bold;">${pr !== null ? pr.toFixed(0) : '-'}</span>
                 </div>
                 <div style="display:flex; justify-content:space-between;">
-                    <span style="color:#2962FF; font-weight:bold;">量 PR</span><span style="font-weight:bold;">${vr !== null ? vr.toFixed(0) : '-'}</span>
+                    <span style="color:#2962FF; font-weight:bold;">籌碼 PR</span><span style="font-weight:bold;">${vr !== null ? vr.toFixed(0) : '-'}</span>
                 </div>
             `;
             toolTip.style.display = 'block';

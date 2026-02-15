@@ -1,10 +1,13 @@
 // ==========================================
-// report-view.js - v14.0 (Search Feature Added)
+// report-view.js - v17.0 (Button Fix & Left Align)
 // ==========================================
 
 const g_viewState = {
     activeTab: 'stock', // 'stock' | 'group'
     
+    // 控制目前要顯示幾筆 (預設 50)
+    renderLimit: 50,
+
     // 顯示設定
     displayType: 'p_rank', // 'p_rank', 'v_rank', 'volhigh'
     
@@ -49,7 +52,7 @@ function renderReportView() {
     // 包覆一層容器以控制寬度 (95%) 與置中
     container.innerHTML = `<div class="w-[95%] mx-auto flex flex-col h-full shadow-2xl rounded-2xl overflow-hidden border border-gray-200 bg-white my-4">${contentHtml}</div>`;
     
-    // ★ 綁定事件 (包含搜尋功能)
+    // 綁定事件 (包含搜尋功能)
     bindEvents();
     
     // 點擊外部關閉搜尋選單
@@ -61,7 +64,7 @@ function renderReportView() {
     });
 }
 
-// --- Row 1: Header (Option B: 按鈕在標題旁) ---
+// --- Row 1: Header ---
 function renderHeaderRow(userInfo) {
     let userHtml = '';
     if (userInfo) {
@@ -111,10 +114,8 @@ function renderNavRow(hasData, updateTime) {
     const btnLabel = "匯入 CSV 資料";
     const dateLabel = updateTime ? `<span class="text-sm text-gray-500 font-mono mr-4 hidden md:inline"><i class="far fa-clock"></i> ${updateTime}</span>` : '';
 
-    // ★ 搜尋框設定
     const placeholder = isStock ? "2330 or 台積電" : "記憶體 or I023290";
     
-    // 搜尋框 HTML 結構 (相對定位，以便下拉選單絕對定位)
     const searchHtml = `
         <div id="nav-search-container" class="relative mx-4 w-64">
             <div class="relative group">
@@ -166,27 +167,27 @@ function renderFilterRow() {
             <div class="flex items-center gap-3 bg-gray-50 px-3 py-2 rounded-lg border border-gray-100">
                 <span class="text-gray-500 font-bold text-xs uppercase">顯示：</span>
                 <label class="flex items-center cursor-pointer hover:text-blue-600 text-sm font-medium">
-                    <input type="radio" name="displayType" value="p_rank" ${g_viewState.displayType === 'p_rank' ? 'checked' : ''} class="mr-2 accent-blue-600"><span class="text-red-600 font-bold">價 PR</span>
+                    <input type="radio" name="displayType" value="p_rank" ${g_viewState.displayType === 'p_rank' ? 'checked' : ''} class="mr-2 accent-blue-600"><span class="text-red-600 font-bold">股價 PR</span>
                 </label>
                 <label class="flex items-center cursor-pointer hover:text-blue-600 text-sm font-medium">
-                    <input type="radio" name="displayType" value="v_rank" ${g_viewState.displayType === 'v_rank' ? 'checked' : ''} class="mr-2 accent-blue-600"><span class="text-blue-600 font-bold">量 PR</span>
+                    <input type="radio" name="displayType" value="v_rank" ${g_viewState.displayType === 'v_rank' ? 'checked' : ''} class="mr-2 accent-blue-600"><span class="text-blue-600 font-bold">籌碼 PR</span>
                 </label>
                 <label class="flex items-center cursor-pointer hover:text-blue-600 text-sm font-medium">
-                    <input type="radio" name="displayType" value="volhigh" ${g_viewState.displayType === 'volhigh' ? 'checked' : ''} class="mr-2 accent-blue-600">量創高
+                    <input type="radio" name="displayType" value="volhigh" ${g_viewState.displayType === 'volhigh' ? 'checked' : ''} class="mr-2 accent-blue-600">籌碼創高
                 </label>
             </div>
 
             <div class="flex items-center gap-3 bg-gray-50 px-3 py-2 rounded-lg border border-gray-100 text-sm font-medium">
                 <span class="text-gray-500 font-bold text-xs uppercase">篩選：</span>
                 <div class="flex items-center gap-2">
-                    <span class="text-red-600 font-bold">價 PR</span>
+                    <span class="text-red-600 font-bold">股價 PR</span>
                     <input type="number" id="filter-pr-min" value="${g_viewState.filter.pr_min}" class="w-16 px-2 py-1 border rounded text-center text-sm focus:ring-1 focus:ring-blue-500 outline-none">
                     <span class="text-gray-400">~</span>
                     <input type="number" id="filter-pr-max" value="${g_viewState.filter.pr_max}" class="w-16 px-2 py-1 border rounded text-center text-sm focus:ring-1 focus:ring-blue-500 outline-none">
                 </div>
                 <div class="w-px h-4 bg-gray-300 mx-2"></div>
                 <div class="flex items-center gap-2">
-                    <span class="text-blue-600 font-bold">量 PR</span>
+                    <span class="text-blue-600 font-bold">籌碼 PR</span>
                     <input type="number" id="filter-vr-min" value="${g_viewState.filter.vr_min}" class="w-16 px-2 py-1 border rounded text-center text-sm focus:ring-1 focus:ring-blue-500 outline-none">
                     <span class="text-gray-400">~</span>
                     <input type="number" id="filter-vr-max" value="${g_viewState.filter.vr_max}" class="w-16 px-2 py-1 border rounded text-center text-sm focus:ring-1 focus:ring-blue-500 outline-none">
@@ -233,7 +234,14 @@ function renderEmptyState() {
     `;
 }
 
-// --- Component: Table Area ---
+// ==========================================
+// report-view.js - v20.0 (Back to In-Table Button, Left Aligned)
+// ==========================================
+
+// ==========================================
+// report-view.js - v20.0 (Back to In-Table Button, Left Aligned)
+// ==========================================
+
 function renderTableArea(sourceData) {
     const allDates = sourceData.dates || [];
     let displayDates = allDates.slice(0, g_viewState.days);
@@ -263,8 +271,33 @@ function renderTableArea(sourceData) {
         return g_viewState.sortDir === 'desc' ? valB - valA : valA - valB;
     });
 
-    const renderIds = ids.slice(0, 100);
+    const currentLimit = g_viewState.renderLimit || 50;
+    const renderIds = ids.slice(0, currentLimit);
+    const remainingCount = ids.length - renderIds.length;
+
     const baseDateStr = allDates[g_viewState.baseDateIndex] || "最新";
+
+    // 計算總欄位數 (colspan 用)
+    // 名稱(1) + PR走勢(1) + 漲幅(1) + 日期欄位數
+    const totalCols = 3 + displayDates.length;
+
+    // 1. 產生表格內容
+    let rowsHtml = renderRows(sourceData, renderIds, displayDates);
+
+    // 2. 按鈕區塊 (表格內部 + 靠左對齊)
+    // 這樣點擊時會有明確的「往下推」視覺效果
+    if (remainingCount > 0) {
+        rowsHtml += `
+            <tr id="load-more-row">
+                <td colspan="${totalCols}" class="p-4 bg-gray-50 border-t border-gray-200 text-left">
+                    <button onclick="loadMoreData()" class="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg shadow-md transition-all inline-flex items-center gap-2 transform hover:-translate-y-0.5 active:translate-y-0 ml-2">
+                        <i class="fas fa-arrow-circle-down"></i>
+                        <span>載入更多資料 (還有 ${remainingCount} 筆)</span>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }
 
     return `
     <div class="flex-1 overflow-auto bg-white border-x border-b border-gray-200 rounded-b-xl relative table-container">
@@ -290,7 +323,7 @@ function renderTableArea(sourceData) {
                 </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
-                ${renderRows(sourceData, renderIds, displayDates)}
+                ${rowsHtml}
             </tbody>
         </table>
     </div>
@@ -443,6 +476,21 @@ function getPctHtml(val) {
 
 function switchTab(tab) {
     g_viewState.activeTab = tab;
+
+    if (tab === 'group') {
+        g_viewState.filter.pr_min = 0;
+        g_viewState.filter.pr_max = 100;
+        g_viewState.renderLimit = 500;
+    } else {
+        g_viewState.filter.pr_min = 95;
+        g_viewState.filter.pr_max = 100;
+        g_viewState.renderLimit = 50;
+    }
+    
+    g_viewState.sortCol = 0;
+    g_viewState.sortDir = 'desc';
+    g_viewState.dateOrder = 'new_to_old';
+
     renderReportView();
 }
 
@@ -452,13 +500,25 @@ function setDays(d) {
 }
 
 function triggerUpload() {
-    // 修正：統一觸發 script.js 定義的單一上傳入口
     const el = document.getElementById('upload-csv');
     if (el) el.click();
     else alert("找不到上傳元件 (upload-csv)，請檢查 HTML");
 }
 
-// ★ 事件綁定：包含搜尋
+window.loadMoreData = function() {
+    const container = document.querySelector('.table-container');
+    const scrollTop = container ? container.scrollTop : 0;
+
+    g_viewState.renderLimit += 50;
+    
+    renderReportView();
+
+    const newContainer = document.querySelector('.table-container');
+    if (newContainer) {
+        newContainer.scrollTop = scrollTop;
+    }
+};
+
 function bindEvents() {
     document.querySelectorAll('input[name="displayType"]').forEach(el => {
         el.onchange = (e) => {
@@ -478,7 +538,6 @@ function bindEvents() {
     bindInput('filter-vr-min', 'vr_min');
     bindInput('filter-vr-max', 'vr_max');
 
-    // ★ 搜尋框事件
     const searchInput = document.getElementById('nav-search-input');
     const searchBtn = document.getElementById('nav-search-btn');
     if (searchInput) {
@@ -489,14 +548,13 @@ function bindEvents() {
                 handleSearchEnter();
             }
         });
-        searchInput.addEventListener('focus', (e) => handleSearchInput(e.target.value)); // 聚焦時也觸發搜尋
+        searchInput.addEventListener('focus', (e) => handleSearchInput(e.target.value)); 
     }
     if (searchBtn) {
         searchBtn.addEventListener('click', () => handleSearchEnter());
     }
 }
 
-// ★ 搜尋邏輯：輸入處理
 function handleSearchInput(keyword) {
     const dropdown = document.getElementById('nav-search-dropdown');
     if (!dropdown || !keyword.trim()) {
@@ -507,7 +565,6 @@ function handleSearchInput(keyword) {
     const currentData = window.dataContext && window.dataContext[g_viewState.activeTab];
     if (!currentData || !currentData.data) return;
 
-    // 搜尋演算法
     const matches = searchAlgorithm(keyword, currentData.names);
     
     if (matches.length === 0) {
@@ -516,7 +573,6 @@ function handleSearchInput(keyword) {
         return;
     }
 
-    // 渲染下拉選單
     const html = matches.map(item => `
         <div onclick="selectSearchResult('${item.id}')" 
              class="px-4 py-2 hover:bg-blue-50 cursor-pointer flex justify-between items-center group transition-colors border-b border-gray-100 last:border-0">
@@ -532,7 +588,6 @@ function handleSearchInput(keyword) {
     dropdown.classList.remove('hidden');
 }
 
-// ★ 搜尋邏輯：核心演算法
 function searchAlgorithm(keyword, namesMap) {
     keyword = keyword.toUpperCase();
     const exact = [];
@@ -540,7 +595,6 @@ function searchAlgorithm(keyword, namesMap) {
     const partial = [];
     const nameMatch = [];
 
-    // 遍歷所有代碼與名稱
     for (let id in namesMap) {
         const name = namesMap[id] || "";
         const idUpper = id.toUpperCase();
@@ -551,27 +605,21 @@ function searchAlgorithm(keyword, namesMap) {
             start.push({ id, name });
         } else if (name.includes(keyword)) {
             nameMatch.push({ id, name });
-        } else if (idUpper.includes(keyword)) { // 很少用到，但補齊 ID 中間符合
+        } else if (idUpper.includes(keyword)) { 
             partial.push({ id, name });
         }
     }
-
-    // 合併結果：優先順序 (完全符合 > ID開頭 > 名稱符合 > ID中間)
-    // 限制顯示前 10 筆
     return [...exact, ...start, ...nameMatch, ...partial].slice(0, 10);
 }
 
-// ★ 搜尋邏輯：按 Enter (直接開第一筆)
 function handleSearchEnter() {
     const dropdown = document.getElementById('nav-search-dropdown');
-    // 如果選單有顯示且有內容，抓第一筆
     if (dropdown && !dropdown.classList.contains('hidden') && dropdown.children.length > 0) {
         const firstItem = dropdown.querySelector('div[onclick]');
         if (firstItem) {
-            firstItem.click(); // 模擬點擊第一筆
+            firstItem.click(); 
         }
     } else {
-        // 如果沒有選單，嘗試重新搜尋一次並開第一筆 (處理盲打 Enter)
         const input = document.getElementById('nav-search-input');
         if (input && input.value.trim()) {
             const currentData = window.dataContext && window.dataContext[g_viewState.activeTab];
@@ -583,15 +631,10 @@ function handleSearchEnter() {
     }
 }
 
-// ★ 搜尋邏輯：點擊選單項目
 function selectSearchResult(id) {
     const currentData = window.dataContext && window.dataContext[g_viewState.activeTab];
     if (!currentData) return;
-
-    // 開啟圖表
     openChart(id);
-    
-    // 清空並關閉
     const input = document.getElementById('nav-search-input');
     if (input) input.value = '';
     closeSearchDropdown();
@@ -628,11 +671,11 @@ function getMatrixVal(source, id, idx) {
     
     if (type === 'p_rank') {
         const val = d.p_rank && d.p_rank[idx];
-        return (val === 0 || val) ? val : ""; // 允許 0
+        return (val === 0 || val) ? val : ""; 
     }
     if (type === 'v_rank') {
         const val = d.v_rank && d.v_rank[idx];
-        return (val === 0 || val) ? val : ""; // 允許 0
+        return (val === 0 || val) ? val : ""; 
     }
     
     if (type === 'volhigh') {
@@ -705,13 +748,9 @@ window.openChart = function(id) {
     if (window.TrendModal) window.TrendModal.open(id, name);
 };
 
-// 點擊複製代碼功能 (增強版：含相容性備案)
 window.copyStockCode = function(id) {
     const text = `${id}.TW`;
-    
-    const showSuccess = () => {
-        console.log(`已複製: ${text}`);
-    };
+    const showSuccess = () => console.log(`已複製: ${text}`);
 
     if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(text)
@@ -728,16 +767,13 @@ function fallbackCopy(text) {
     textArea.style.position = "fixed";
     textArea.style.left = "-9999px";
     textArea.style.top = "0";
-    
     document.body.appendChild(textArea);
     textArea.focus();
     textArea.select();
-    
     try {
         document.execCommand('copy');
     } catch (err) {
         console.error('複製錯誤', err);
     }
-    
     document.body.removeChild(textArea);
 }

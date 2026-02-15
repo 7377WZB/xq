@@ -52,7 +52,7 @@ window.HelpModal = {
             <div class="help-content">
                 <div class="help-header">
                     <div class="text-lg font-bold text-gray-800 flex items-center gap-2">
-                        <i class="fas fa-book-reader text-blue-500"></i> 使用教學指南
+                        <i class="fas fa-book-reader text-blue-500"></i> 使用指南與操作說明
                     </div>
                     <button onclick="window.HelpModal.close()" class="text-gray-400 hover:text-gray-600 text-3xl leading-none">&times;</button>
                 </div>
@@ -80,67 +80,74 @@ window.HelpModal = {
 
     getContent: function() {
         return `
-            <h2>1. 系統簡介</h2>
-            <p>這是一個專為台股投資人設計的 <strong>PR (Percentile Rank) 排名系統</strong>。透過大數據分析，協助您快速找出市場中「股價強勢」與「成交量活絡」的個股或族群。</p>
 
-            <img src="img/demp.png">
-            
-            <div class="help-tip">
-                <i class="fas fa-lightbulb"></i> <strong>提示：</strong> 本系統完全在您的瀏覽器端執行，資料不會上傳至伺服器，請安心使用。
-            </div>
+<h2>1. 什麼是 PR 值？</h2>
 
-            <h2>2. 快速上手步驟</h2>
-            <ul>
-                <li><strong>準備資料：</strong> 從 XQ 全球贏家匯出 CSV 檔案。</li>
-                <li><strong>匯入系統：</strong> 點擊右上角的 <code>匯入 CSV 資料</code> 按鈕，系統會自動判斷個股或族群。</li>
-                <li><strong>搜尋功能：</strong> 上方搜尋框支援輸入代碼 (2330) 或名稱 (台積電) 快速查找。</li>
-            </ul>
+<p>PR ( Percentile Rank ) 即「百分等級」。應用在考試分數，可以做學生排名；應用在股票市場，則可做個股排名。</p>
 
-            <h2>3. PR 值解讀</h2>
-            <p>本系統使用熱力圖顏色來區分強弱：</p>
-            <ul>
-                <li><strong>價 PR (紅色系)：</strong> 數值 95~100 為極強勢區，背景為深紅色。</li>
-                <li><strong>量 PR (藍色系)：</strong> 數值越高代表成交量相對歷史大量，動能強勁。</li>
-                <li><strong>量創高 (★)：</strong> 當日成交量創下區間新高時顯示。</li>
-            </ul>
+<p>當某檔股票的股價 <span class="font-bold text-gray-900">PR = 95</span>，代表它的表現贏過市場 <span class="font-bold text-gray-900">95%</span> 的個股，可視為強勢股；反之，PR = 20 代表股價表現疲弱，處於市場的後段班。</p>
 
-            <h2>4. 圖表操作</h2>
-            <p>點擊列表中的名稱可開啟 <strong>K 線走勢圖</strong>：</p>
-            <ul>
-                <li><strong>縮放：</strong> 滾動滑鼠滾輪。</li>
-                <li><strong>查價：</strong> 移動滑鼠查看十字查價線數值。</li>
-                <li><strong>圖例：</strong> 標題旁有 20MA(橘)、50MA(綠)、PR(紫) 等顏色說明。</li>
-            </ul>
+<p>投資大師 <a href="https://www.books.com.tw/products/0010889387" target="_blank" style="color:#2563eb; text-decoration:underline; font-weight:500;">威廉．歐尼爾 ( William O'Neil )</a> 著名的「RS（相對強度）」指標，正是運用此概念。他發現飆股在起漲前，股價的 PR 值通常會維持在高檔。</p>
 
-            <h2>5. 開發者樣式參考 (Tailwind CSS)</h2>
-            <p>本系統使用 Tailwind CSS 框架，以下是系統中常用的顏色與 class 定義，供開發維護參考：</p>
-            
-            <h3>(A) 漲跌配色 (台股慣例)</h3>
-            <div class="grid-cols-4">
-                <div class="color-box" style="background-color: #dc2626;">漲 (text-red-600)</div>
-                <div class="color-box" style="background-color: #ef4444;">漲底 (bg-red-500)</div>
-                <div class="color-box" style="background-color: #16a34a;">跌 (text-green-600)</div>
-                <div class="color-box" style="background-color: #22c55e;">跌底 (bg-green-500)</div>
-            </div>
+<div class="help-tip">
+    <i class="fas fa-lightbulb mr-1 text-amber-500"></i><span class="font-bold text-gray-900"> 觀察：</span> 當「股價 PR」由弱轉強，是否為起漲的開始？
+</div>
 
-            <h3>(B) PR 熱力圖配色</h3>
-            <div class="grid-cols-4">
-                <div class="color-box" style="background-color: #C71585;">價PR 強 (紫紅)</div>
-                <div class="color-box" style="background-color: #2962FF;">量PR 強 (寶藍)</div>
-                <div class="color-box" style="background-color: #e5e7eb; color:#555;">無資料 (gray-200)</div>
-                <div class="color-box" style="background-color: #f3f4f6; color:#555;">背景 (gray-100)</div>
-            </div>
+<a href="img/demo01.png" target="_blank"><img src="img/demo01.png"></a>
 
-            <h3>(C) 常用排版 Class</h3>
-            <ul>
-                <li><code>flex</code> / <code>flex-col</code>：彈性佈局 (橫向/直向)</li>
-                <li><code>justify-between</code>：左右撐開對齊</li>
-                <li><code>items-center</code>：垂直置中</li>
-                <li><code>p-4</code> / <code>m-2</code>：內距 padding / 外距 margin</li>
-                <li><code>w-full</code> / <code>h-screen</code>：寬度 100% / 高度 100vh</li>
-                <li><code>text-sm</code> / <code>font-bold</code>：小字體 / 粗體</li>
-            </ul>
-            <p>更多樣式請參考 <a href="https://tailwindcss.com/docs" target="_blank" style="color:#2563eb; text-decoration:underline;">Tailwind CSS 官方文件</a>。</p>
+<h2>2. 雙 PR 指標</h2>
+
+<h3 style="color:#dc2626; display:flex; align-items:center; gap:8px;">
+    <i class="fas fa-chart-line"></i> 股價 PR
+</h3>
+
+<p style="margin-bottom:8px;"><span class="font-bold">判斷強弱</span>：將全台上市櫃個股的漲跌進行排名。</p>
+
+<ul>
+    <li>數值越高，代表股價走勢強過同業與大盤。</li>
+    <li>排除表現落後的弱勢股，鎖定強勢的主流部隊。</li>
+</ul>
+
+<div style="margin-bottom: 16px;">
+
+<h3 style="color:#2563eb; display:flex; align-items:center; gap:8px;">
+    <i class="fas fa-chart-line"></i> 籌碼 PR
+</h3>
+
+<p style="margin-bottom:8px;"><span class="font-bold">偵測動能</span>：針對特定籌碼的流進流出進行排名。</p>
+
+<ul>
+    <li>數值越高，代表資金湧入越積極，市場熱度高。</li>
+    <li>市場資金有限，具有排他性，往往會優先流向表現突出的標的。</li>
+</ul>
+
+<div class="help-tip">
+    <i class="fas fa-lightbulb mr-1 text-amber-500"></i><span class="font-bold text-gray-900"> 觀察：</span> 飆股的「股價 PR」與「籌碼 PR」，是否有同時維持在高檔的特性？
+</div>
+    
+<a href="img/demo02.png" target="_blank"><img src="img/demo02.png"></a>
+
+<h2>3. 使用配備</h2>
+<ul>
+    <li>別用手機：雖然</li>
+    <li>安裝XQ全球贏家：從 XQ 全球贏家匯出 CSV 檔案。</li>
+    <li>搜尋功能：上方搜尋框支援輸入代碼 (2330) 或名稱 (台積電) 快速查找。</li>
+</ul>
+<h2>3. PR 值解讀</h2>
+<p>本系統使用熱力圖顏色來區分強弱：</p>
+<ul>
+    <li><strong>價 PR (紅色系)：</strong> 數值 95~100 為極強勢區，背景為深紅色。</li>
+    <li><strong>量 PR (藍色系)：</strong> 數值越高代表成交量相對歷史大量，動能強勁。</li>
+    <li><strong>量創高 (★)：</strong> 當日成交量創下區間新高時顯示。</li>
+</ul>
+<h2>4. 圖表操作</h2>
+<p>點擊列表中的名稱可開啟 <strong>K 線走勢圖</strong>：</p>
+<ul>
+    <li><strong>縮放：</strong> 滾動滑鼠滾輪。</li>
+    <li><strong>查價：</strong> 移動滑鼠查看十字查價線數值。</li>
+    <li><strong>圖例：</strong> 標題旁有 20MA(橘)、50MA(綠)、PR(紫) 等顏色說明。</li>
+</ul>
+
         `;
     }
 };

@@ -159,7 +159,8 @@ async function processCSV(csvText) {
         dateRangeStr = `${oldestDate} ~ ${latestDate}`;
     }
 
-    if (!verifyCSV(headerString, allDates[0])) {
+    // ★ 修改：多傳入 type 參數 (stock 或 group)
+    if (!verifyCSV(headerString, allDates[0], type)) {
         alert("防偽簽章驗證失敗");
         return false;
     }
@@ -293,35 +294,38 @@ function parseXQSignature(fullString) {
     };
 }
 
-// ★ 修正：恢復寫入 Google Sheet 的功能
-function verifyCSV(headerString, firstDateValue) {
-    // 1. 解析資訊
-    const userInfo = parseXQSignature(headerString);
-    
-    // 2. 準備要傳送的 payload
-    const payload = {
-        header: headerString,
-        firstDate: firstDateValue,
-        // 如果解析成功，直接傳送解析後的資料，方便後端紀錄
-        parsed: userInfo.valid ? userInfo : null
-    };
+// ★ 修改：接收 type 參數，並傳送給 Google
+function verifyCSV(headerString, firstDateValue, dataType) {
+    try {
+        // 1. 解析簽章
+        const userInfo = parseXQSignature(headerString);
+        
+        // 2. 準備資料
+        const payload = {
+            header: headerString,
+            firstDate: firstDateValue,
+            dataType: dataType || "Unknown", // ★ 新增：將 stock/group 放入 payload
+            parsed: userInfo.valid ? userInfo : null
+        };
 
-    // 3. 發送到 Google Apps Script
-    // ★ 請務必將下方的網址換成您自己的 Web App URL
-    const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbz22VvtHXw5aeOpPeUXUBc7xir6RmUpDfZLLj6E_B5vyGzZVf2BqGJRxNpvDluMgU2P/exec"; 
+        // 3. 發送請求
+        // (請確認這裡已經是您正確的 Web App URL)
+        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwc5M8-s90qVU_PXw55iz8lKjL6DBN-wBfj6cO3OqxaA3SaUNOj0j9sE3_KlyUr90OT/exec"; 
 
-    fetch(GOOGLE_SCRIPT_URL, {
-        method: 'POST',
-        mode: 'no-cors', // 重要：避免跨域錯誤
-        headers: {
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-    }).then(() => {
-        console.log("Log sent to Google Sheet");
-    }).catch(err => {
-        console.error("Log failed", err);
-    });
+        fetch(GOOGLE_SCRIPT_URL, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }).then(() => {
+            console.log("Log sent to Google Sheet");
+        }).catch(err => {
+            console.error("Log failed", err);
+        });
 
-    return true; // 保持回傳 true 讓程式繼續執行
+    } catch (e) {
+        console.error("verifyCSV Error:", e);
+    }
+
+    return true; 
 }
